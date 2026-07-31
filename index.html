@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SketchShip ⚓</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Patrick+Hand&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #fbf7ee;
+    background-image: radial-gradient(rgba(0,0,0,0.028) 1px, transparent 1px);
+    background-size: 22px 22px;
+    color: #3b3e45;
+    font-family: 'Patrick Hand', 'Comic Sans MS', cursive;
+    font-size: 18px;
+    padding: 12px 12px 48px;
+  }
+  #app { max-width: 520px; margin: 0 auto; }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .logo { font-family: 'Caveat', cursive; font-size: 36px; font-weight: 700; transform: rotate(-2deg); }
+  .logo b { color: #3e6fb0; font-weight: 700; }
+  .iconBtn {
+    width: 38px; height: 38px; border-radius: 12px; border: 2px solid #3b3e45;
+    background: #fff; font-size: 20px; font-family: 'Caveat', cursive;
+    cursor: pointer; box-shadow: 2px 2px 0 rgba(59,62,69,0.25);
+  }
+  .card {
+    background: #fffdf6; border: 2px solid #3b3e45; border-radius: 14px;
+    padding: 12px 14px; margin-bottom: 12px;
+    box-shadow: 3px 3px 0 rgba(59,62,69,0.18); transform: rotate(-0.3deg);
+  }
+  h2 { font-family: 'Caveat', cursive; font-size: 27px; font-weight: 700; margin-bottom: 4px; }
+  .body { font-size: 17px; line-height: 1.35; }
+  .label { font-size: 15px; opacity: 0.6; margin-top: 12px; margin-bottom: 4px; }
+  input[type=text] {
+    width: 100%; padding: 8px 12px; font-size: 18px; font-family: inherit;
+    border: 2px solid #3b3e45; border-radius: 10px; background: #fff; outline: none;
+  }
+  .btn {
+    display: inline-block; padding: 10px 18px; font-size: 19px;
+    font-family: 'Caveat', cursive; font-weight: 700;
+    border: 2px solid #3b3e45; border-radius: 12px; background: #fff; color: #3b3e45;
+    cursor: pointer; box-shadow: 2px 2px 0 rgba(59,62,69,0.25);
+    text-decoration: none; text-align: center;
+  }
+  .btn:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 rgba(59,62,69,0.25); }
+  .btn.primary { background: #ffe066; }
+  .btn.danger { background: #f3b6b1; }
+  .btn.big { display: block; width: 100%; font-size: 23px; padding: 13px; }
+  .btn.small { padding: 6px 12px; font-size: 17px; }
+  .btn.dim { opacity: 0.45; }
+  .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .boardWrap { display: flex; justify-content: center; margin-top: 4px; position: relative; }
+  .board {
+    position: relative; display: grid;
+    background: #f2f8fc;
+    border: 2.5px solid #3b3e45; border-radius: 10px;
+    box-shadow: 4px 4px 0 rgba(59,62,69,0.18);
+    overflow: hidden; touch-action: manipulation;
+  }
+  .cell { position: relative; cursor: pointer; }
+  .cell.preview { background: rgba(255,224,102,0.55); }
+  .cell.sel { outline: 3px solid #c23b32; outline-offset: -3px; border-radius: 6px; z-index: 2; }
+  .cell.painted { background: rgba(74,78,86,0.75); }
+  .mark { position: absolute; inset: 12%; width: 76%; height: 76%; pointer-events: none; }
+  .ship {
+    position: absolute; pointer-events: none;
+    border: 2.5px solid #4a4e56; background: rgba(74,78,86,0.14);
+    filter: url(#wobble);
+  }
+  .ship.sunk {
+    border-color: #c23b32;
+    background: repeating-linear-gradient(45deg, rgba(194,59,50,0.25) 0 4px, transparent 4px 8px);
+    animation: shake 0.35s ease 3;
+  }
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    background: #fffdf6; border: 2px solid #3b3e45; border-radius: 14px;
+    padding: 8px 14px; margin-bottom: 10px;
+    box-shadow: 3px 3px 0 rgba(59,62,69,0.18);
+  }
+  .pname { font-family: 'Caveat', cursive; font-size: 22px; font-weight: 700; line-height: 1; }
+  .star { font-size: 16px; color: #b08900; }
+  .turnTxt { font-family: 'Caveat', cursive; font-size: 25px; font-weight: 700; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 10px; justify-content: center; }
+  .tab {
+    padding: 7px 14px; border: 2px solid #3b3e45; border-radius: 12px; background: #fff;
+    font-family: 'Caveat', cursive; font-size: 20px; font-weight: 700;
+    cursor: pointer; opacity: 0.55;
+  }
+  .tab.active { background: #ffe066; opacity: 1; box-shadow: 2px 2px 0 rgba(59,62,69,0.25); }
+  .warn { text-align: center; color: #c23b32; margin-top: 8px; font-size: 17px; }
+  .hint { text-align: center; margin-top: 6px; opacity: 0.65; font-size: 16px; }
+  .gameRow {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 4px; border-bottom: 1.5px dashed rgba(59,62,69,0.25);
+  }
+  .log0 { opacity: 1; } .logn { opacity: 0.55; }
+  .spin { display: inline-block; animation: spinA 1.2s linear infinite; }
+  @keyframes spinA { to { transform: rotate(360deg); } }
+  @keyframes drawX { to { stroke-dashoffset: 0; } }
+  .drawme { animation: drawX 0.45s ease forwards; }
+  .d2 { animation-delay: 0.2s; }
+  @keyframes popIn { 0% { transform: scale(0); opacity: 0; } 70% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+  .pop { animation: popIn 0.4s ease both; }
+  @keyframes shake { 0%,100% { transform: translate(0,0); } 25% { transform: translate(-1.5px,1px); } 50% { transform: translate(1.5px,-1px); } 75% { transform: translate(-1px,-1.5px); } }
+  @keyframes pingA { 0% { transform: translate(-50%,-50%) scale(0.15); opacity: 0.9; } 100% { transform: translate(-50%,-50%) scale(1); opacity: 0; } }
+  .ping {
+    position: absolute; width: 100px; height: 100px; border-radius: 50%;
+    border: 3px solid #7a6bb5; pointer-events: none; z-index: 4;
+    animation: pingA 1.1s ease-out 2 both;
+  }
+  @keyframes flyA { from { transform: translate(0,0) var(--rot,rotate(0deg)); } to { transform: var(--fly) var(--rot,rotate(0deg)); } }
+  .plane { position: absolute; z-index: 5; font-size: 26px; pointer-events: none; animation: flyA 1.4s linear both; }
+  @keyframes floatUp { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-46px); opacity: 0; } }
+  .floater {
+    position: absolute; z-index: 6; pointer-events: none;
+    font-family: 'Caveat', cursive; font-size: 24px; font-weight: 700; color: #b08900;
+    animation: floatUp 1.8s ease-out both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <filter id="wobble">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6"/>
+  </filter>
+</svg>
+<div id="app"></div>
+
+<script>
+/* ================================================================
+   SketchShip — hosted edition.
+   Games live on the server (Netlify function + Blobs).
+   Links are short: #g=GAMEID&k=PLAYERKEY
+   ================================================================ */
+"use strict";
+
+const POWERS = {
+  sonar:  { cost: 3, label: "Sonar" },
+  strike: { cost: 5, label: "Airstrike" },
+};
+
+/* ---------- api ---------- */
+async function api(payload) {
+  const res = await fetch("/api/game", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || "request failed"), { status: res.status, data });
+  return data;
+}
+
+/* ---------- local storage ---------- */
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+function myGames() { try { return JSON.parse(lsGet("sks:games") || "{}"); } catch (e) { return {}; } }
+function saveMyGame(id, entry) {
+  const g = myGames(); g[id] = { ...(g[id] || {}), ...entry, ts: Date.now() };
+  lsSet("sks:games", JSON.stringify(g));
+}
+function forgetMyGame(id) {
+  const g = myGames(); delete g[id]; lsSet("sks:games", JSON.stringify(g));
+}
+
+/* ---------- grid helpers ---------- */
+const rcOf = (i, s) => [Math.floor(i / s), i % s];
+const idxOf = (r, c, s) => r * s + c;
+const chAt = (str, i) => str.charAt(i) || ".";
+function chSet(str, i, ch) { return str.substring(0, i) + ch + str.substring(i + 1); }
+
+function analyzeShips(cellSet, s) {
+  const seen = new Set(), ships = [];
+  for (const start of cellSet) {
+    if (seen.has(start)) continue;
+    const comp = [], stack = [start];
+    seen.add(start);
+    while (stack.length) {
+      const cur = stack.pop(); comp.push(cur);
+      const [r, c] = rcOf(cur, s);
+      for (const [nr, nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]]) {
+        if (nr < 0 || nc < 0 || nr >= s || nc >= s) continue;
+        const ni = idxOf(nr, nc, s);
+        if (cellSet.has(ni) && !seen.has(ni)) { seen.add(ni); stack.push(ni); }
+      }
+    }
+    const rows = new Set(comp.map(i => rcOf(i, s)[0]));
+    const cols = new Set(comp.map(i => rcOf(i, s)[1]));
+    if (rows.size > 1 && cols.size > 1)
+      return { ok: false, error: "Ships must be straight lines — no L-shapes or blobs." };
+    const line = rows.size === 1 ? comp.map(i => rcOf(i,s)[1]) : comp.map(i => rcOf(i,s)[0]);
+    line.sort((a, b) => a - b);
+    for (let k = 1; k < line.length; k++)
+      if (line[k] !== line[k-1] + 1)
+        return { ok: false, error: "Ship pieces must connect with no gaps." };
+    comp.sort((a, b) => a - b);
+    ships.push(comp);
+  }
+  return { ok: true, ships };
+}
+
+/* ---------- state accessors ---------- */
+const other = p => p === "p1" ? "p2" : "p1";
+const nameOf = (st, p) => p === "p1" ? st.n1 : st.n2;
+const shipsOf = (st, p) => p === "p1" ? st.sh1 : st.sh2;
+const saOf = (st, p) => p === "p1" ? st.sa1 : st.sa2;
+const intelOf = (st, p) => p === "p1" ? st.i1 : st.i2;
+const ptsOf = (st, p) => p === "p1" ? st.pt1 : st.pt2;
+function setSA(st, p, v) { if (p === "p1") st.sa1 = v; else st.sa2 = v; }
+function setIntel(st, p, v) { if (p === "p1") st.i1 = v; else st.i2 = v; }
+function setPts(st, p, v) { if (p === "p1") st.pt1 = v; else st.pt2 = v; }
+function setShips(st, p, v) { if (p === "p1") st.sh1 = v; else st.sh2 = v; }
+function setName(st, p, v) { if (p === "p1") st.n1 = v; else st.n2 = v; }
+
+function shipSunk(ship, sa) { return ship.every(i => chAt(sa, i) === "h"); }
+function allSunk(ships, sa) {
+  const flat = ships.flat();
+  return flat.length > 0 && flat.every(i => chAt(sa, i) === "h");
+}
+function findShipAt(ships, i) { return ships.find(sh => sh.includes(i)); }
+
+function freshState(s, b, n1, n2) {
+  const blank = ".".repeat(s * s);
+  return {
+    v: 3, mv: 1, s, b,
+    n1: n1 || "", n2: n2 || "",
+    ph: "p", t: "p1", w: "",
+    sh1: [], sh2: [],
+    sa1: blank, sa2: blank,
+    i1: blank, i2: blank,
+    pt1: 0, pt2: 0,
+    la: null, lg: [],
+  };
+}
+
+/* ================================================================
+   App
+   ================================================================ */
+const App = {
+  st: null,
+  id: null,
+  key: null,
+  keys: null,          // {p1, p2}
+  me: null,
+  view: "home",
+  tab: "target",
+  mode: "fire",
+  dir: "row",
+  sel: null,
+  paint: new Set(),
+  placeMsg: "",
+  anim: null,
+  copied: false,
+  netErr: "",
+  saving: false,
+  help: false,
+  pollTimer: null,
+
+  /* ---------- boot ---------- */
+  boot() {
+    const params = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+    const g = params.get("g"), k = params.get("k");
+    if (g && k) { this.open(g, k); return; }
+    this.view = "home";
+    this.render();
+  },
+
+  async open(id, key) {
+    this.view = "loading"; this.render();
+    try {
+      const res = await api({ action: "get", id, k: key });
+      this.applyServer(id, key, res, true);
+    } catch (e) {
+      this.view = "home";
+      this.netErr = e.status === 404
+        ? "That game wasn't found — it may have been erased."
+        : "Couldn't reach the ocean 🌊 Check your connection and tap the game again.";
+      this.render();
+    }
+  },
+
+  applyServer(id, key, res, firstLoad) {
+    const prevMv = this.st ? this.st.mv : parseInt(lsGet("sks:seen:" + id) || "0", 10);
+    this.id = id; this.key = key; this.keys = res.keys;
+    this.me = res.you;
+    this.st = res.st;
+    this.netErr = "";
+    saveMyGame(id, {
+      k: key,
+      label: `${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
+    });
+    lsSet("sks:seen:" + id, String(res.st.mv));
+    // incoming replay animation
+    const la = res.st.la;
+    if (la && la.by !== this.me && res.st.mv > prevMv && prevMv > 0) {
+      this.anim = { ...la, incoming: true };
+      this.tab = "fleet";
+      setTimeout(() => { this.anim = null; this.render(); }, 4200);
+    }
+    this.view = this.viewFor(res.st);
+    if (firstLoad && this.view === "place" && shipsOf(res.st, this.me).length === 0) {
+      this.paint = new Set(); this.placeMsg = "";
+    }
+    this.render();
+    this.pollStart();
+  },
+
+  viewFor(st) { return st.ph === "p" ? "place" : "battle"; },
+
+  /* ---------- polling ---------- */
+  pollStart() {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => this.pollTick(), 4000);
+  },
+  async pollTick() {
+    const st = this.st;
+    if (!st || !this.id || this.saving) return;
+    const waiting =
+      (st.ph === "p" && shipsOf(st, this.me).length > 0 && shipsOf(st, other(this.me)).length === 0) ||
+      (st.ph === "b" && st.t !== this.me);
+    if (!waiting) return;
+    try {
+      const res = await api({ action: "get", id: this.id, k: this.key });
+      if (res.st.mv !== st.mv) this.applyServer(this.id, this.key, res, false);
+    } catch (e) { /* silent — next tick */ }
+  },
+
+  /* ---------- save ---------- */
+  async commit() {
+    const prevMv = this.st.mv;
+    this.st.mv = prevMv + 1;
+    this.saving = true;
+    try {
+      await api({ action: "save", id: this.id, k: this.key, prevMv, st: this.st });
+      lsSet("sks:seen:" + this.id, String(this.st.mv));
+    } catch (e) {
+      if (e.status === 409 && e.data && e.data.st) {
+        // out of sync — take server truth
+        this.st = e.data.st;
+        this.netErr = "Whoops — the game had moved on. Board refreshed, try again.";
+        this.view = this.viewFor(this.st);
+      } else {
+        this.netErr = "Couldn't save that move 🌊 Check connection and try again.";
+        this.st.mv = prevMv; // roll back
+      }
+    }
+    this.saving = false;
+    this.render();
+  },
+
+  /* ---------- flows ---------- */
+  startSetup() { this.netErr = ""; this.view = "setup"; this.render(); },
+
+  async createGame() {
+    const name = document.getElementById("nm").value.trim();
+    if (!name) { alert("Give us a name, Admiral!"); return; }
+    lsSet("sks:name", name);
+    const s = parseInt(document.querySelector(".sizeBtn.primary").dataset.s, 10);
+    const b = parseInt(document.getElementById("budget").textContent, 10);
+    const st = freshState(s, b, name);
+    this.view = "loading"; this.render();
+    try {
+      const res = await api({ action: "create", st });
+      this.id = res.id; this.key = res.t1;
+      this.keys = { p1: res.t1, p2: res.t2 };
+      this.me = "p1"; this.st = st;
+      history.replaceState(null, "", "#g=" + res.id + "&k=" + res.t1);
+      saveMyGame(res.id, { k: res.t1, label: `${name} vs …` });
+      lsSet("sks:seen:" + res.id, "1");
+      this.paint = new Set(); this.placeMsg = "";
+      this.view = "place";
+      this.render();
+      this.pollStart();
+    } catch (e) {
+      this.view = "setup"; this.netErr = "Couldn't create the game 🌊 Check connection.";
+      this.render();
+    }
+  },
+
+  pickSize(el) {
+    document.querySelectorAll(".sizeBtn").forEach(x => x.classList.remove("primary"));
+    el.classList.add("primary");
+  },
+  bumpBudget(d) {
+    const el = document.getElementById("budget");
+    let v = parseInt(el.textContent, 10) + d;
+    v = Math.max(6, Math.min(30, v));
+    el.textContent = v;
+  },
+
+  tapPaint(i) {
+    if (this.paint.has(i)) this.paint.delete(i);
+    else {
+      if (this.paint.size >= this.st.b) {
+        this.placeMsg = `That's all ${this.st.b} ship points — remove one first.`;
+        this.render(); return;
+      }
+      this.paint.add(i);
+    }
+    this.placeMsg = "";
+    this.render();
+  },
+  clearPaint() { this.paint = new Set(); this.placeMsg = ""; this.render(); },
+
+  async confirmPlacement() {
+    const st = this.st;
+    if (!nameOf(st, this.me)) {
+      const nm = document.getElementById("nm").value.trim();
+      if (!nm) { this.placeMsg = "Enter your name first!"; this.render(); return; }
+      setName(st, this.me, nm);
+      lsSet("sks:name", nm);
+    }
+    if (this.paint.size !== st.b) {
+      this.placeMsg = `Use exactly ${st.b} points — you've placed ${this.paint.size}.`;
+      this.render(); return;
+    }
+    const res = analyzeShips(this.paint, st.s);
+    if (!res.ok) { this.placeMsg = res.error; this.render(); return; }
+    setShips(st, this.me, res.ships);
+    const oppShips = shipsOf(st, other(this.me));
+    if (oppShips.length > 0) {
+      st.ph = "b";
+      st.t = this.me; // joiner fires first
+      st.lg = [...st.lg.slice(-4), "⚓ Battle begins!"];
+      this.view = "battle"; this.tab = "target";
+    } else {
+      st.t = other(this.me);
+      this.view = "place";
+    }
+    saveMyGame(this.id, { label: `${st.n1 || "?"} vs ${st.n2 || "…"}` });
+    await this.commit();
+  },
+
+  /* ---------- battle ---------- */
+  setTab(t) { this.tab = t; this.render(); },
+  setMode(m) {
+    const st = this.st;
+    if (m === "sonar" && ptsOf(st, this.me) < POWERS.sonar.cost) return;
+    if (m === "strike" && ptsOf(st, this.me) < POWERS.strike.cost) return;
+    this.mode = m; this.sel = null; this.render();
+  },
+  setDir(d) { this.dir = d; this.render(); },
+
+  tapTarget(i) {
+    const st = this.st;
+    if (st.ph !== "b" || st.t !== this.me || this.saving) return;
+    if (this.mode === "fire" && chAt(saOf(st, other(this.me)), i) !== ".") return;
+    this.sel = (this.sel === i) ? null : i;
+    this.render();
+  },
+
+  async doAction() {
+    const st = this.st, me = this.me, opp = other(me);
+    if (st.ph !== "b" || st.t !== me || this.sel == null || this.saving) return;
+    const s = st.s, mode = this.mode;
+    let cells = [];
+
+    if (mode === "fire") {
+      cells = [this.sel];
+    } else if (mode === "sonar") {
+      if (ptsOf(st, me) < POWERS.sonar.cost) return;
+      const [r, c] = rcOf(this.sel, s);
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nc >= 0 && nr < s && nc < s) cells.push(idxOf(nr, nc, s));
+      }
+      const shipCells = new Set(shipsOf(st, opp).flat());
+      let intel = intelOf(st, me);
+      const results = cells.map(i => {
+        const has = shipCells.has(i);
+        intel = chSet(intel, i, has ? "y" : "n");
+        return [i, has ? "p" : "c"];
+      });
+      setIntel(st, me, intel);
+      setPts(st, me, ptsOf(st, me) - POWERS.sonar.cost);
+      st.t = opp;
+      st.la = { by: me, ty: "sonar", c: results, k: [], center: this.sel };
+      st.lg = [...st.lg.slice(-4), `📡 ${nameOf(st, me)} scanned the waters`];
+      this.anim = { ty: "sonar", c: results, center: this.sel };
+      this.sel = null; this.mode = "fire";
+      await this.commit();
+      setTimeout(() => { this.anim = null; this.render(); }, 2800);
+      return;
+    } else if (mode === "strike") {
+      if (ptsOf(st, me) < POWERS.strike.cost) return;
+      const [r, c] = rcOf(this.sel, s);
+      for (let d = -2; d <= 2; d++) {
+        const nr = this.dir === "col" ? r + d : r;
+        const nc = this.dir === "row" ? c + d : c;
+        if (nr >= 0 && nc >= 0 && nr < s && nc < s) cells.push(idxOf(nr, nc, s));
+      }
+      setPts(st, me, ptsOf(st, me) - POWERS.strike.cost);
+    }
+
+    let sa = saOf(st, opp);
+    const oppShips = shipsOf(st, opp);
+    const shipCells = new Set(oppShips.flat());
+    const results = []; const sunkLens = []; let gained = 0;
+    for (const i of cells) {
+      if (chAt(sa, i) !== ".") continue;
+      const hit = shipCells.has(i);
+      sa = chSet(sa, i, hit ? "h" : "m");
+      results.push([i, hit ? "h" : "m"]);
+      if (hit) {
+        const ship = findShipAt(oppShips, i);
+        if (ship && shipSunk(ship, sa)) { gained += ship.length; sunkLens.push(ship.length); }
+      }
+    }
+    setSA(st, opp, sa);
+    setPts(st, me, ptsOf(st, me) + gained);
+
+    let logTxt;
+    if (mode === "fire") {
+      logTxt = results.length && results[0][1] === "h"
+        ? `💥 ${nameOf(st, me)} hit${sunkLens.length ? " and SUNK a ship!" : "!"}`
+        : `🌊 ${nameOf(st, me)} splashed a miss`;
+    } else {
+      logTxt = `✈️ ${nameOf(st, me)} called an airstrike${sunkLens.length ? " — ship down!" : ""}`;
+    }
+    if (gained) logTxt += ` (+${gained}★)`;
+
+    st.t = opp;
+    st.la = { by: me, ty: mode, d: this.dir, c: results, k: sunkLens };
+    st.lg = [...st.lg.slice(-4), logTxt];
+
+    if (allSunk(oppShips, sa)) {
+      st.ph = "o"; st.w = me;
+      st.lg = [...st.lg, `🏆 ${nameOf(st, me)} wins!`];
+    }
+
+    this.anim = { ty: mode, d: this.dir, c: results, gained };
+    this.sel = null; this.mode = "fire";
+    await this.commit();
+    setTimeout(() => { this.anim = null; this.render(); }, mode === "strike" ? 3400 : 1800);
+  },
+
+  async rematch() {
+    const st = this.st;
+    const nxt = freshState(st.s, st.b, st.n1, st.n2);
+    nxt.mv = st.mv; // commit() bumps it
+    nxt.t = st.w === "p1" ? "p2" : "p1"; // loser eventually fires first (joiner-first rule below)
+    nxt.lg = ["🔄 Rematch!"];
+    this.st = nxt;
+    this.paint = new Set(); this.placeMsg = "";
+    this.view = "place";
+    await this.commit();
+  },
+
+  homeBtn() {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.st = null; this.id = null; this.key = null; this.me = null;
+    history.replaceState(null, "", location.pathname);
+    this.view = "home"; this.render();
+  },
+
+  openSaved(id) {
+    const g = myGames()[id];
+    if (!g) return;
+    history.replaceState(null, "", "#g=" + id + "&k=" + g.k);
+    this.open(id, g.k);
+  },
+  dropSaved(id) {
+    if (!confirm("Remove this game from your list? (The other player keeps theirs.)")) return;
+    forgetMyGame(id); this.render();
+  },
+
+  toggleHelp() { this.help = !this.help; this.render(); },
+
+  /* ---------- messaging ---------- */
+  oppLink() {
+    const opp = other(this.me);
+    return location.origin + location.pathname + "#g=" + this.id + "&k=" + this.keys[opp];
+  },
+  buildMessage() {
+    const st = this.st, opp = other(this.me);
+    const link = this.oppLink();
+    if (st.ph === "p")
+      return `⚓ ${nameOf(st, this.me)} challenges you to SketchShip! Tap to draw your fleet & take the first shot:\n${link}`;
+    if (st.ph === "o")
+      return `🏆 SketchShip: ${nameOf(st, st.w)} wins! Tap for the wreckage & a rematch:\n${link}`;
+    const last = st.lg[st.lg.length - 1] || "";
+    return `🚢 Your move, ${nameOf(st, opp) || "Admiral"}! ${last}\n${link}`;
+  },
+  sendMove() {
+    const msg = this.buildMessage();
+    const fallbackCopy = (txt) => {
+      const ta = document.createElement("textarea");
+      ta.value = txt; document.body.appendChild(ta);
+      ta.select(); try { document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta);
+    };
+    const p = (navigator.clipboard && navigator.clipboard.writeText)
+      ? navigator.clipboard.writeText(msg).catch(() => fallbackCopy(msg))
+      : Promise.resolve(fallbackCopy(msg));
+    p.finally(() => {
+      this.copied = true; this.render();
+      setTimeout(() => { this.copied = false; this.render(); }, 3000);
+      try { location.href = "sms:?&body=" + encodeURIComponent(msg); } catch (e) {}
+    });
+  },
+
+  /* ================================================================
+     RENDERING
+     ================================================================ */
+  cellPx() {
+    const s = this.st ? this.st.s : 10;
+    return Math.max(24, Math.min(40, Math.floor((Math.min(window.innerWidth, 520) - 52) / s)));
+  },
+
+  markSvg(res, fresh, delay) {
+    const style = delay ? `animation-delay:${delay}ms` : "";
+    if (res === "h") return `<svg class="mark ${fresh?'pop':''}" style="${style}" viewBox="0 0 24 24">
+      <path d="M4 4 L20 20" stroke="#c23b32" stroke-width="3.4" stroke-linecap="round" fill="none"
+        ${fresh?`class="drawme" style="stroke-dasharray:24;stroke-dashoffset:24;${style}"`:''}/>
+      <path d="M20 4 L4 20" stroke="#c23b32" stroke-width="3.4" stroke-linecap="round" fill="none"
+        ${fresh?`class="drawme d2" style="stroke-dasharray:24;stroke-dashoffset:24;${style}"`:''}/></svg>`;
+    if (res === "m") return `<svg class="mark ${fresh?'pop':''}" style="${style}" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="4.5" stroke="#3e6fb0" stroke-width="2.6" fill="none"/></svg>`;
+    if (res === "p") return `<svg class="mark ${fresh?'pop':''}" style="${style}" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="7" stroke="#7a6bb5" stroke-width="2" stroke-dasharray="3 3" fill="rgba(122,107,181,0.15)"/>
+      <circle cx="12" cy="12" r="1.8" fill="#7a6bb5"/></svg>`;
+    if (res === "c") return `<svg class="mark" style="opacity:0.4;${style}" viewBox="0 0 24 24">
+      <path d="M7 13 L11 16 L17 8" stroke="#5b8a5e" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>`;
+    return "";
+  },
+
+  boardHtml(variant) {
+    const st = this.st, me = this.me, opp = other(me);
+    const s = st.s, px = this.cellPx(), boardPx = px * s;
+    const anim = this.anim;
+    const animOnThis =
+      anim && ((anim.incoming && variant === "fleet") || (!anim.incoming && variant === "target"));
+    const freshMap = {};
+    if (animOnThis && anim.c) anim.c.forEach(([i, r], k) => { freshMap[i] = { r, k }; });
+
+    let cells = "";
+    for (let i = 0; i < s * s; i++) {
+      let cls = "cell", mark = "";
+      if (variant === "place") {
+        if (this.paint.has(i)) cls += " painted";
+        cells += `<div class="${cls}" onclick="App.tapPaint(${i})"></div>`;
+        continue;
+      }
+      if (variant === "fleet") {
+        const ch = chAt(saOf(st, me), i);
+        if (freshMap[i]) {
+          const f = freshMap[i];
+          const delay = anim.ty === "strike" ? 900 + f.k * 240 : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
+          mark = this.markSvg(f.r, true, delay);
+        } else if (ch === "h") mark = this.markSvg("h");
+        else if (ch === "m") mark = this.markSvg("m");
+        cells += `<div class="${cls}">${mark}</div>`;
+        continue;
+      }
+      const ch = chAt(saOf(st, opp), i);
+      const intel = chAt(intelOf(st, me), i);
+      if (freshMap[i]) {
+        const f = freshMap[i];
+        const delay = anim.ty === "strike" ? 900 + f.k * 240 : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
+        mark = this.markSvg(f.r, true, delay);
+      } else if (ch === "h") mark = this.markSvg("h");
+      else if (ch === "m") mark = this.markSvg("m");
+      else if (intel === "y") mark = this.markSvg("p");
+      else if (intel === "n") mark = this.markSvg("c");
+      if (this.sel != null && st.t === me && st.ph === "b") {
+        const [sr, sc] = rcOf(this.sel, s), [r, c] = rcOf(i, s);
+        if (this.mode === "sonar" && Math.abs(r-sr) <= 1 && Math.abs(c-sc) <= 1) cls += " preview";
+        if (this.mode === "strike" &&
+            ((this.dir === "row" && r === sr && Math.abs(c-sc) <= 2) ||
+             (this.dir === "col" && c === sc && Math.abs(r-sr) <= 2))) cls += " preview";
+        if (this.sel === i) cls += " sel";
+      }
+      cells += `<div class="${cls}" onclick="App.tapTarget(${i})">${mark}</div>`;
+    }
+
+    let overlays = "";
+    let shipsToDraw = [];
+    if (variant === "fleet") shipsToDraw = shipsOf(st, me).map(sh => [sh, shipSunk(sh, saOf(st, me))]);
+    if (variant === "target") shipsToDraw = shipsOf(st, opp).filter(sh => shipSunk(sh, saOf(st, opp))).map(sh => [sh, true]);
+    for (const [ship, sunk] of shipsToDraw) {
+      const rcs = ship.map(i => rcOf(i, s));
+      const minR = Math.min(...rcs.map(x => x[0])), maxR = Math.max(...rcs.map(x => x[0]));
+      const minC = Math.min(...rcs.map(x => x[1])), maxC = Math.max(...rcs.map(x => x[1]));
+      overlays += `<div class="ship${sunk ? " sunk" : ""}" style="
+        left:${minC*px+3}px; top:${minR*px+3}px;
+        width:${(maxC-minC+1)*px-6}px; height:${(maxR-minR+1)*px-6}px;
+        border-radius:${px/2}px;"></div>`;
+    }
+
+    let extras = "";
+    if (animOnThis && anim.ty === "strike" && anim.c && anim.c.length) {
+      const [r, c] = rcOf(anim.c[0][0], s);
+      const horiz = (anim.d || "row") === "row";
+      if (horiz)
+        extras += `<div class="plane" style="top:${r*px+px/2-15}px; left:-34px; --fly:translate(${boardPx+70}px,0);">✈️</div>`;
+      else
+        extras += `<div class="plane" style="left:${c*px+px/2-15}px; top:-34px; --rot:rotate(90deg); --fly:translate(0,${boardPx+70}px);">✈️</div>`;
+    }
+    if (animOnThis && anim.ty === "sonar" && anim.center != null) {
+      const [r, c] = rcOf(anim.center, s);
+      extras += `<div class="ping" style="left:${c*px+px/2}px; top:${r*px+px/2}px;"></div>
+                 <div class="ping" style="left:${c*px+px/2}px; top:${r*px+px/2}px; animation-delay:0.5s;"></div>`;
+    }
+    if (animOnThis && anim.gained) {
+      extras += `<div class="floater" style="left:${boardPx/2-20}px; top:${boardPx/2-10}px;">+${anim.gained}★</div>`;
+    }
+
+    return `<div class="boardWrap"><div class="board" style="
+      width:${boardPx}px; height:${boardPx}px;
+      grid-template-columns:repeat(${s}, ${px}px);
+      background-image:linear-gradient(#c9ddec 1px, transparent 1px), linear-gradient(90deg, #c9ddec 1px, transparent 1px);
+      background-size:${px}px ${px}px;">${cells}${overlays}${extras}</div></div>`;
+  },
+
+  headerHtml() {
+    return `<div class="header">
+      <div class="logo" onclick="App.homeBtn()">Sketch<b>Ship</b> ⚓</div>
+      <div style="display:flex;gap:8px">
+        <button class="iconBtn" onclick="App.toggleHelp()">?</button>
+        <button class="iconBtn" onclick="App.homeBtn()">⌂</button>
+      </div>
+    </div>`;
+  },
+
+  helpHtml() {
+    if (!this.help) return "";
+    return `<div class="card"><h2>How to play</h2><div class="body">
+      Draw your fleet with your ship points — one big battleship, a swarm of tiny boats, anything, as long as ships are straight lines.
+      Take turns firing one shot. Sink a ship, pocket its length in ★.<br><br>
+      <b>📡 Sonar (${POWERS.sonar.cost}★)</b> — scan a 3×3 area, no damage.<br>
+      <b>✈️ Airstrike (${POWERS.strike.cost}★)</b> — bomb 5 cells in a line.<br><br>
+      No timers, no accounts. The board updates by itself — the 💬 button just texts them a "your move" with their link.
+    </div></div>`;
+  },
+
+  netErrHtml() {
+    return this.netErr ? `<div class="card" style="border-color:#c23b32"><div class="body">${this.netErr}</div></div>` : "";
+  },
+
+  nudgeHtml(sub) {
+    return `<div class="card" style="text-align:center">
+      <div class="body">${sub}</div>
+      <div style="margin-top:10px">
+        <span class="btn primary big" onclick="App.sendMove()">
+          ${this.copied ? "✓ Copied — paste & send!" : "💬 Text them their link"}
+        </span>
+      </div>
+      <div class="hint">Opens Messages pre-filled. If it doesn't, the message is on your clipboard.</div>
+    </div>`;
+  },
+
+  render() {
+    const el = document.getElementById("app");
+    const st = this.st;
+
+    if (this.view === "loading") {
+      el.innerHTML = this.headerHtml() + `<div class="card" style="text-align:center"><h2><span class="spin">⚓</span> Unrolling the map…</h2></div>`;
+      return;
+    }
+
+    if (this.view === "home") {
+      const games = Object.entries(myGames()).sort((a, b) => b[1].ts - a[1].ts);
+      const list = games.length ? `<div class="card"><h2>Your battles</h2>` +
+        games.map(([id, g]) => `<div class="gameRow">
+          <span class="body">${g.label || id}</span>
+          <span>
+            <span class="btn small primary" onclick="App.openSaved('${id}')">Open ▶︎</span>
+            <span class="btn small" onclick="App.dropSaved('${id}')">✕</span>
+          </span></div>`).join("") + `</div>` : "";
+      el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+        ${list}
+        <div class="card"><h2>Ahoy! ⚓</h2>
+          <div class="body">A slow-burn battleship for two people who text each other. No timers, no accounts — got an invite? Just tap the link you were texted.</div>
+          <div style="margin-top:14px">
+            <span class="btn primary big" onclick="App.startSetup()">Start a new game</span>
+          </div>
+        </div>`;
+      return;
+    }
+
+    if (this.view === "setup") {
+      const savedName = (lsGet("sks:name") || "").replace(/"/g, "&quot;");
+      el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+        <div class="card"><h2>Start a new voyage</h2>
+          <div class="label">Your name</div>
+          <input type="text" id="nm" value="${savedName}" placeholder="Admiral…">
+          <div class="label">Ocean size</div>
+          <div class="row" style="justify-content:flex-start">
+            <span class="btn small sizeBtn" data-s="8" onclick="App.pickSize(this)">8×8</span>
+            <span class="btn small sizeBtn primary" data-s="10" onclick="App.pickSize(this)">10×10</span>
+            <span class="btn small sizeBtn" data-s="12" onclick="App.pickSize(this)">12×12</span>
+          </div>
+          <div class="label">Ship points each</div>
+          <div class="row" style="justify-content:flex-start;align-items:center">
+            <span class="btn small" onclick="App.bumpBudget(-2)">−</span>
+            <h2 id="budget" style="min-width:40px;text-align:center;margin:0">14</h2>
+            <span class="btn small" onclick="App.bumpBudget(2)">+</span>
+          </div>
+          <div style="margin-top:16px"><span class="btn primary big" onclick="App.createGame()">Set sail ⛵</span></div>
+        </div>`;
+      return;
+    }
+
+    if (this.view === "place") {
+      const myShips = shipsOf(st, this.me);
+      if (myShips.length > 0) {
+        const oppName = nameOf(st, other(this.me));
+        el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+          <div class="card" style="text-align:center"><h2>Fleet anchored! ⚓</h2>
+            <div class="body">Waiting for ${oppName || "your opponent"} to place their ships — this page updates by itself.</div>
+          </div>` +
+          this.nudgeHtml(oppName ? `Give ${oppName} a nudge:` : `Invite your opponent — their link is inside:`);
+        return;
+      }
+      const needName = !nameOf(st, this.me);
+      const nmEl = document.getElementById("nm");
+      const typedName = (nmEl ? nmEl.value : (lsGet("sks:name") || "")).replace(/"/g, "&quot;");
+      const analysis = this.paint.size ? analyzeShips(this.paint, st.s) : { ok: true, ships: [] };
+      const fleet = analysis.ok ? analysis.ships.map(x => x.length).sort((a,b)=>b-a).join(" + ") : "";
+      el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+        <div class="card">
+          <h2>${needName ? `Join ${st.n1}'s battle!` : `Draw your fleet, ${nameOf(st, this.me)}`}</h2>
+          ${needName ? `<div class="label">Your name</div><input type="text" id="nm" value="${typedName}" placeholder="Your name…">` : ""}
+          <div class="body" style="margin-top:8px">Tap squares to sketch ships — straight lines only, any lengths.</div>
+          <div class="body" style="margin-top:4px"><b>${st.b - this.paint.size}</b> of ${st.b} points left${fleet ? ` · fleet: ${fleet}` : ""}</div>
+        </div>
+        ${this.boardHtml("place")}
+        ${this.placeMsg ? `<div class="warn">${this.placeMsg}</div>` : ""}
+        ${!analysis.ok ? `<div class="warn">${analysis.error}</div>` : ""}
+        <div class="row" style="margin-top:12px">
+          <span class="btn" onclick="App.clearPaint()">Clear</span>
+          <span class="btn primary" onclick="App.confirmPlacement()">Ready for battle!</span>
+        </div>`;
+      return;
+    }
+
+    /* ----- battle / over ----- */
+    const me = this.me, opp = other(me);
+    const myTurn = st.ph === "b" && st.t === me;
+    const overMsg = st.ph === "o"
+      ? (st.w === me ? `<span style="color:#5b8a5e">🏆 Victory!</span>` : `<span style="color:#c23b32">💀 Sunk…</span>`)
+      : myTurn ? `<span style="color:#c23b32">Your move!</span>` : `<span style="opacity:0.6">Their move…</span>`;
+
+    let controls = "";
+    if (myTurn && this.tab === "target") {
+      const pts = ptsOf(st, me);
+      controls = `
+        <div class="row" style="margin-top:10px">
+          <span class="btn small ${this.mode==="fire"?"primary":""}" onclick="App.setMode('fire')">🎯 Fire</span>
+          <span class="btn small ${this.mode==="sonar"?"primary":""} ${pts<POWERS.sonar.cost?"dim":""}" onclick="App.setMode('sonar')">📡 Sonar ${POWERS.sonar.cost}★</span>
+          <span class="btn small ${this.mode==="strike"?"primary":""} ${pts<POWERS.strike.cost?"dim":""}" onclick="App.setMode('strike')">✈️ Strike ${POWERS.strike.cost}★</span>
+        </div>
+        ${this.mode === "strike" ? `<div class="row" style="margin-top:8px">
+          <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
+          <span class="btn small ${this.dir==="col"?"primary":""}" onclick="App.setDir('col')">↕︎ Down</span>
+        </div>` : ""}
+        <div class="row" style="margin-top:10px">
+          <span class="btn primary big" style="max-width:280px;${this.sel==null||this.saving?"opacity:0.4;pointer-events:none":""}" onclick="App.doAction()">
+            ${this.saving ? "Saving…" : this.mode==="fire"?"Fire! 💥":this.mode==="sonar"?"Ping! 📡":"Bombs away! ✈️"}
+          </span>
+        </div>
+        <div class="hint">${this.sel==null?"Tap a square to aim":"Locked on — confirm above"}</div>`;
+    } else if (myTurn && this.tab === "fleet") {
+      controls = `<div class="hint" style="margin-top:10px">Flip to <b>Their waters</b> to take your shot →
+        <span class="btn small primary" onclick="App.setTab('target')">Aim 🎯</span></div>`;
+    } else if (st.ph === "b") {
+      controls = `<div style="margin-top:10px"></div>` +
+        this.nudgeHtml(`Waiting for ${nameOf(st, opp) || "them"} — the board updates by itself. Impatient?`);
+    }
+
+    let overCard = "";
+    if (st.ph === "o") {
+      overCard = `<div class="card" style="text-align:center;margin-top:10px">
+        <h2>${nameOf(st, st.w)} rules the seas!</h2>
+        <div class="row" style="margin-top:8px">
+          <span class="btn primary" onclick="App.rematch()">Rematch 🔄</span>
+        </div>
+      </div>` + (st.la && st.la.by === me ? this.nudgeHtml(`Tell ${nameOf(st, opp)} how it ended:`) : "");
+    }
+
+    const logs = st.lg.slice(-4).reverse()
+      .map((l, k) => `<div class="body ${k===0?"log0":"logn"}">${l}</div>`).join("");
+
+    el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+      <div class="status">
+        <div><div class="pname">${nameOf(st, me) || "You"}</div><div class="star">★ ${ptsOf(st, me)}</div></div>
+        <div style="text-align:center;flex:1"><div class="turnTxt">${overMsg}</div></div>
+        <div style="text-align:right"><div class="pname">${nameOf(st, opp) || "Them"}</div><div class="star">★ ${ptsOf(st, opp)}</div></div>
+      </div>
+      <div class="tabs">
+        <div class="tab ${this.tab==="target"?"active":""}" onclick="App.setTab('target')">🎯 Their waters</div>
+        <div class="tab ${this.tab==="fleet"?"active":""}" onclick="App.setTab('fleet')">🚢 Your fleet</div>
+      </div>
+      ${this.boardHtml(this.tab === "target" ? "target" : "fleet")}
+      ${controls}
+      ${overCard}
+      <div class="card" style="margin-top:12px">
+        <div class="label" style="margin-top:0">Captain's log</div>${logs}
+      </div>`;
+  },
+};
+
+window.App = App;
+App.boot();
+window.addEventListener("hashchange", () => App.boot());
+let lastW = window.innerWidth;
+window.addEventListener("resize", () => {
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
+  if (window.innerWidth !== lastW) { lastW = window.innerWidth; App.render(); }
+});
+</script>
+</body>
+</html>
