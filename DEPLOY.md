@@ -1,26 +1,29 @@
-# Deploying SketchShip to Netlify
+# SketchShip
 
-This version stores games on the server, so it needs Netlify's
-function support — a plain drag-and-drop of index.html is not enough.
-Two ways, pick one:
+Live at **https://sketchship.netlify.app**, auto-deployed from the
+`main` branch of this repo.
 
-## Option A — Netlify CLI (fastest)
-From this folder, on a machine with Node.js:
+Layout:
 
-    npm install
-    npx netlify-cli login        # once, opens browser
-    npx netlify-cli deploy --prod
-    # when asked, link it to your existing SketchShip site
+    index.html                  the whole client (no build step)
+    netlify/functions/game.mjs  server: game storage + seat assignment
+    netlify.toml                points Netlify at the functions folder
+    package.json                one dependency, @netlify/blobs
 
-Every future update is just `npx netlify-cli deploy --prod` again.
+Netlify settings: no build command, publish directory = repo root.
+Functions are bundled automatically with esbuild.
 
-## Option B — GitHub (set & forget)
-1. Put this folder in a GitHub repo
-2. In Netlify: Add new site -> Import from GitHub -> pick the repo
-3. No build command needed; publish directory = repo root
-4. Future updates: git push, Netlify redeploys itself
+## Updating
+Push to `main`. Netlify rebuilds itself. Check the Deploys tab if a
+change doesn't show up within a couple of minutes.
+
+## How players are identified
+Each browser generates a permanent id on first visit and stores it in
+localStorage. The invite link contains only the game id, never an
+identity. The server hands seat 1 to the creator, seat 2 to the first
+other device that opens the link, and refuses everyone after that.
 
 ## Test after deploy
-Open your site URL -> Start a new game. If game creation fails with
-a network error, the function isn't running — check the deploy log
-for `game.mjs`.
+Open the site, start a new game, and confirm it reaches the server. A
+network error on creation means the function isn't running — check the
+deploy log for `game.mjs`.
