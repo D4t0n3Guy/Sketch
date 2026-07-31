@@ -139,7 +139,8 @@
 /* ================================================================
    SketchShip — hosted edition.
    Games live on the server (Netlify function + Blobs).
-   Links are short: #g=GAMEID&k=PLAYERKEY
+   Links are short and identical for both players: #g=GAMEID
+   Who you are comes from a per-device id in localStorage, never the link.
    ================================================================ */
 "use strict";
 
@@ -153,7 +154,7 @@ async function api(payload) {
   const res = await fetch("/api/game", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, pid: myPid() }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || "request failed"), { status: res.status, data });
@@ -164,6 +165,18 @@ async function api(payload) {
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function myGames() { try { return JSON.parse(lsGet("sks:games") || "{}"); } catch (e) { return {}; } }
+
+/* This device's permanent player identity. Created once, never shared in a link. */
+function myPid() {
+  let p = lsGet("sks:pid");
+  if (!p) {
+    const buf = new Uint8Array(16);
+    crypto.getRandomValues(buf);
+    p = Array.from(buf, b => b.toString(16).padStart(2, "0")).join("");
+    lsSet("sks:pid", p);
+  }
+  return p;
+}
 function saveMyGame(id, entry) {
   const g = myGames(); g[id] = { ...(g[id] || {}), ...entry, ts: Date.now() };
   lsSet("sks:games", JSON.stringify(g));
@@ -248,8 +261,6 @@ function freshState(s, b, n1, n2) {
 const App = {
   st: null,
   id: null,
-  key: null,
-  keys: null,          // {p1, p2}
   me: null,
   view: "home",
   tab: "target",
@@ -268,34 +279,37 @@ const App = {
   /* ---------- boot ---------- */
   boot() {
     const params = new URLSearchParams((location.hash || "").replace(/^#/, ""));
-    const g = params.get("g"), k = params.get("k");
-    if (g && k) { this.open(g, k); return; }
+    const g = params.get("g");
+    if (g) { this.open(g); return; }
     this.view = "home";
     this.render();
   },
 
-  async open(id, key) {
+  async open(id) {
     this.view = "loading"; this.render();
     try {
-      const res = await api({ action: "get", id, k: key });
-      this.applyServer(id, key, res, true);
+      const res = await api({ action: "get", id });
+      this.applyServer(id, res, true);
     } catch (e) {
       this.view = "home";
       this.netErr = e.status === 404
         ? "That game wasn't found — it may have been erased."
+        : e.status === 403
+        ? "Both seats in that game are already taken."
+        : e.status === 410
+        ? "That game predates player accounts — start a fresh one."
         : "Couldn't reach the ocean 🌊 Check your connection and tap the game again.";
       this.render();
     }
   },
 
-  applyServer(id, key, res, firstLoad) {
+  applyServer(id, res, firstLoad) {
     const prevMv = this.st ? this.st.mv : parseInt(lsGet("sks:seen:" + id) || "0", 10);
-    this.id = id; this.key = key; this.keys = res.keys;
+    this.id = id;
     this.me = res.you;
     this.st = res.st;
     this.netErr = "";
     saveMyGame(id, {
-      k: key,
       label: `${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
     });
     lsSet("sks:seen:" + id, String(res.st.mv));
@@ -329,8 +343,8 @@ const App = {
       (st.ph === "b" && st.t !== this.me);
     if (!waiting) return;
     try {
-      const res = await api({ action: "get", id: this.id, k: this.key });
-      if (res.st.mv !== st.mv) this.applyServer(this.id, this.key, res, false);
+      const res = await api({ action: "get", id: this.id });
+      if (res.st.mv !== st.mv) this.applyServer(this.id, res, false);
     } catch (e) { /* silent — next tick */ }
   },
 
@@ -340,7 +354,7 @@ const App = {
     this.st.mv = prevMv + 1;
     this.saving = true;
     try {
-      await api({ action: "save", id: this.id, k: this.key, prevMv, st: this.st });
+      await api({ action: "save", id: this.id, prevMv, st: this.st });
       lsSet("sks:seen:" + this.id, String(this.st.mv));
     } catch (e) {
       if (e.status === 409 && e.data && e.data.st) {
@@ -370,11 +384,10 @@ const App = {
     this.view = "loading"; this.render();
     try {
       const res = await api({ action: "create", st });
-      this.id = res.id; this.key = res.t1;
-      this.keys = { p1: res.t1, p2: res.t2 };
+      this.id = res.id;
       this.me = "p1"; this.st = st;
-      history.replaceState(null, "", "#g=" + res.id + "&k=" + res.t1);
-      saveMyGame(res.id, { k: res.t1, label: `${name} vs …` });
+      history.replaceState(null, "", "#g=" + res.id);
+      saveMyGame(res.id, { label: `${name} vs …` });
       lsSet("sks:seen:" + res.id, "1");
       this.paint = new Set(); this.placeMsg = "";
       this.view = "place";
@@ -518,17 +531,21 @@ const App = {
     setSA(st, opp, sa);
     setPts(st, me, ptsOf(st, me) + gained);
 
+    // A plain shot that connects earns another go. Airstrikes don't.
+    const struck = mode === "fire" && results.length && results[0][1] === "h";
+
     let logTxt;
     if (mode === "fire") {
-      logTxt = results.length && results[0][1] === "h"
+      logTxt = struck
         ? `💥 ${nameOf(st, me)} hit${sunkLens.length ? " and SUNK a ship!" : "!"}`
         : `🌊 ${nameOf(st, me)} splashed a miss`;
     } else {
       logTxt = `✈️ ${nameOf(st, me)} called an airstrike${sunkLens.length ? " — ship down!" : ""}`;
     }
     if (gained) logTxt += ` (+${gained}★)`;
+    if (struck) logTxt += " Go again!";
 
-    st.t = opp;
+    st.t = struck ? me : opp;
     st.la = { by: me, ty: mode, d: this.dir, c: results, k: sunkLens };
     st.lg = [...st.lg.slice(-4), logTxt];
 
@@ -557,16 +574,15 @@ const App = {
 
   homeBtn() {
     if (this.pollTimer) clearInterval(this.pollTimer);
-    this.st = null; this.id = null; this.key = null; this.me = null;
+    this.st = null; this.id = null; this.me = null;
     history.replaceState(null, "", location.pathname);
     this.view = "home"; this.render();
   },
 
   openSaved(id) {
-    const g = myGames()[id];
-    if (!g) return;
-    history.replaceState(null, "", "#g=" + id + "&k=" + g.k);
-    this.open(id, g.k);
+    if (!myGames()[id]) return;
+    history.replaceState(null, "", "#g=" + id);
+    this.open(id);
   },
   dropSaved(id) {
     if (!confirm("Remove this game from your list? (The other player keeps theirs.)")) return;
@@ -576,15 +592,14 @@ const App = {
   toggleHelp() { this.help = !this.help; this.render(); },
 
   /* ---------- messaging ---------- */
-  oppLink() {
-    const opp = other(this.me);
-    return location.origin + location.pathname + "#g=" + this.id + "&k=" + this.keys[opp];
+  gameLink() {
+    return location.origin + location.pathname + "#g=" + this.id;
   },
   buildMessage() {
     const st = this.st, opp = other(this.me);
-    const link = this.oppLink();
+    const link = this.gameLink();
     if (st.ph === "p")
-      return `⚓ ${nameOf(st, this.me)} challenges you to SketchShip! Tap to draw your fleet & take the first shot:\n${link}`;
+      return `⚓ ${nameOf(st, this.me)} challenges you to SketchShip! Open this on your own phone to draw your fleet & take the first shot:\n${link}`;
     if (st.ph === "o")
       return `🏆 SketchShip: ${nameOf(st, st.w)} wins! Tap for the wreckage & a rematch:\n${link}`;
     const last = st.lg[st.lg.length - 1] || "";
@@ -735,10 +750,12 @@ const App = {
     if (!this.help) return "";
     return `<div class="card"><h2>How to play</h2><div class="body">
       Draw your fleet with your ship points — one big battleship, a swarm of tiny boats, anything, as long as ships are straight lines.
-      Take turns firing one shot. Sink a ship, pocket its length in ★.<br><br>
+      Take turns firing one shot. <b>Land a hit and you shoot again</b> — keep going until you miss.
+      Sink a ship, pocket its length in ★.<br><br>
       <b>📡 Sonar (${POWERS.sonar.cost}★)</b> — scan a 3×3 area, no damage.<br>
       <b>✈️ Airstrike (${POWERS.strike.cost}★)</b> — bomb 5 cells in a line.<br><br>
-      No timers, no accounts. The board updates by itself — the 💬 button just texts them a "your move" with their link.
+      No timers. The board updates by itself — the 💬 button just texts them a "your move" nudge.
+      One link per game: whoever opens it on their own phone gets their own side, and it stays theirs.
     </div></div>`;
   },
 
@@ -751,7 +768,7 @@ const App = {
       <div class="body">${sub}</div>
       <div style="margin-top:10px">
         <span class="btn primary big" onclick="App.sendMove()">
-          ${this.copied ? "✓ Copied — paste & send!" : "💬 Text them their link"}
+          ${this.copied ? "✓ Copied — paste & send!" : "💬 Text them the game link"}
         </span>
       </div>
       <div class="hint">Opens Messages pre-filled. If it doesn't, the message is on your clipboard.</div>
@@ -779,7 +796,7 @@ const App = {
       el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
         ${list}
         <div class="card"><h2>Ahoy! ⚓</h2>
-          <div class="body">A slow-burn battleship for two people who text each other. No timers, no accounts — got an invite? Just tap the link you were texted.</div>
+          <div class="body">A slow-burn battleship for two people who text each other. No timers, no passwords — got an invite? Just tap the link you were texted, on your own phone.</div>
           <div style="margin-top:14px">
             <span class="btn primary big" onclick="App.startSetup()">Start a new game</span>
           </div>
@@ -853,12 +870,13 @@ const App = {
     let controls = "";
     if (myTurn && this.tab === "target") {
       const pts = ptsOf(st, me);
+      const canPower = pts >= Math.min(POWERS.sonar.cost, POWERS.strike.cost);
       controls = `
-        <div class="row" style="margin-top:10px">
-          <span class="btn small ${this.mode==="fire"?"primary":""}" onclick="App.setMode('fire')">🎯 Fire</span>
+        ${canPower ? `<div class="row" style="margin-top:10px">
+          <span class="btn small ${this.mode==="fire"?"primary":""}" onclick="App.setMode('fire')">🎯 Shot</span>
           <span class="btn small ${this.mode==="sonar"?"primary":""} ${pts<POWERS.sonar.cost?"dim":""}" onclick="App.setMode('sonar')">📡 Sonar ${POWERS.sonar.cost}★</span>
           <span class="btn small ${this.mode==="strike"?"primary":""} ${pts<POWERS.strike.cost?"dim":""}" onclick="App.setMode('strike')">✈️ Strike ${POWERS.strike.cost}★</span>
-        </div>
+        </div>` : ""}
         ${this.mode === "strike" ? `<div class="row" style="margin-top:8px">
           <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
           <span class="btn small ${this.dir==="col"?"primary":""}" onclick="App.setDir('col')">↕︎ Down</span>
@@ -868,7 +886,7 @@ const App = {
             ${this.saving ? "Saving…" : this.mode==="fire"?"Fire! 💥":this.mode==="sonar"?"Ping! 📡":"Bombs away! ✈️"}
           </span>
         </div>
-        <div class="hint">${this.sel==null?"Tap a square to aim":"Locked on — confirm above"}</div>`;
+        <div class="hint">${this.sel==null?"Tap a square on their waters to aim":"Locked on — tap the button above to shoot"}</div>`;
     } else if (myTurn && this.tab === "fleet") {
       controls = `<div class="hint" style="margin-top:10px">Flip to <b>Their waters</b> to take your shot →
         <span class="btn small primary" onclick="App.setTab('target')">Aim 🎯</span></div>`;
