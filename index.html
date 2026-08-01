@@ -262,6 +262,8 @@ const App = {
   st: null,
   id: null,
   me: null,
+  epoch: 0,        // bumped on every local save; invalidates in-flight polls
+  resync: false,   // set when a save failed and server truth must be refetched
   view: "home",
   tab: "target",
   mode: "fire",
@@ -341,10 +343,20 @@ const App = {
     const waiting =
       (st.ph === "p" && shipsOf(st, this.me).length > 0 && shipsOf(st, other(this.me)).length === 0) ||
       (st.ph === "b" && st.t !== this.me);
-    if (!waiting) return;
+    // A failed save leaves us unsure what the server holds, so refresh regardless.
+    if (!waiting && !this.resync) return;
+    const id = this.id, epoch = this.epoch;
     try {
-      const res = await api({ action: "get", id: this.id });
-      if (res.st.mv !== st.mv) this.applyServer(this.id, res, false);
+      const res = await api({ action: "get", id });
+      // This request may have been in flight while we saved a move of our own.
+      // Anything that raced with a local save is stale by definition — drop it,
+      // or it wipes the shot the player just watched land.
+      if (this.id !== id || this.saving || this.epoch !== epoch || !this.st) return;
+      if (this.resync || res.st.mv > this.st.mv) {
+        this.resync = false;
+        this.netErr = "";
+        this.applyServer(id, res, false);
+      }
     } catch (e) { /* silent — next tick */ }
   },
 
@@ -352,6 +364,7 @@ const App = {
   async commit() {
     const prevMv = this.st.mv;
     this.st.mv = prevMv + 1;
+    this.epoch++;
     this.saving = true;
     try {
       await api({ action: "save", id: this.id, prevMv, st: this.st });
@@ -360,11 +373,15 @@ const App = {
       if (e.status === 409 && e.data && e.data.st) {
         // out of sync — take server truth
         this.st = e.data.st;
+        this.resync = false;
         this.netErr = "Whoops — the game had moved on. Board refreshed, try again.";
         this.view = this.viewFor(this.st);
+        lsSet("sks:seen:" + this.id, String(this.st.mv));
       } else {
-        this.netErr = "Couldn't save that move 🌊 Check connection and try again.";
-        this.st.mv = prevMv; // roll back
+        // The board was already mutated in place, so rolling back mv alone would
+        // leave a phantom shot on screen. Ask the server for the truth instead.
+        this.netErr = "Couldn't save that move 🌊 Reconnecting…";
+        this.resync = true;
       }
     }
     this.saving = false;
