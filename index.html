@@ -1292,20 +1292,20 @@ const App = {
         : this.sel==null ? "Tap a square on their waters to aim"
         : "Locked on — tap the button above to shoot";
       controls = `
-        ${canPower ? `<div class="row" style="margin-top:10px">
-          <span class="btn small ${this.mode==="fire"?"primary":""}" onclick="App.setMode('fire')">🎯 Shot</span>
-          ${acts.map(chip).join("")}
+        <div class="row" style="margin-top:10px">
+          <span class="btn primary big" style="max-width:280px;${!ready||this.saving?"opacity:0.4;pointer-events:none":""}" onclick="App.doAction()">${label}</span>
         </div>
-        <div class="row" style="margin-top:6px">${sups.map(chip).join("")}</div>` : ""}
-        ${armed ? `<div class="hint" style="margin-top:6px">Armed: ${armed}</div>` : ""}
+        <div class="hint">${hint}</div>
         ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
           <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
           <span class="btn small ${this.dir==="col"?"primary":""}" onclick="App.setDir('col')">↕︎ Down</span>
         </div>` : ""}
-        <div class="row" style="margin-top:10px">
-          <span class="btn primary big" style="max-width:280px;${!ready||this.saving?"opacity:0.4;pointer-events:none":""}" onclick="App.doAction()">${label}</span>
+        ${canPower ? `<div class="row" style="margin-top:12px">
+          <span class="btn small ${this.mode==="fire"?"primary":""}" onclick="App.setMode('fire')">🎯 Shot</span>
+          ${acts.map(chip).join("")}
         </div>
-        <div class="hint">${hint}</div>`;
+        <div class="row" style="margin-top:6px">${sups.map(chip).join("")}</div>` : ""}
+        ${armed ? `<div class="hint" style="margin-top:6px">Armed: ${armed}</div>` : ""}`;
     } else if (st.ph === "b") {
       controls = `<div style="margin-top:10px"></div>` +
         this.nudgeHtml(`Waiting for ${nameOf(st, opp) || "them"} — the board updates by itself. Impatient?`);
