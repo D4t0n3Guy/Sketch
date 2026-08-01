@@ -1016,11 +1016,9 @@ const App = {
           : anim.ty === "nuke" ? 780 + f.k * 60
           : anim.ty === "storm" ? 380 + f.k * 130
           : anim.ty === "depth" ? 380 + f.k * 320
-          : anim.ty === "storm" ? 380 + f.k * 130
-          : anim.ty === "depth" ? 380 + f.k * 320
           : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
           mark = this.markSvg(f.r, true, delay);
-        } else if (anim.mask && anim.mask.has(i)) mark = "";
+        } else if (animOnThis && anim.mask && anim.mask.has(i)) mark = "";
         else if (ch === "h") mark = this.markSvg("h");
         else if (ch === "m") mark = this.markSvg("m");
         if (!mark && mnOf(st, me).includes(i)) mark = `<span class="mineMark">\u2693</span>`;
@@ -1040,6 +1038,8 @@ const App = {
           : anim.ty === "strike" ? 900 + f.k * 240
           : anim.ty === "torp" ? 280 + f.k * 100
           : anim.ty === "nuke" ? 780 + f.k * 60
+          : anim.ty === "storm" ? 380 + f.k * 130
+          : anim.ty === "depth" ? 380 + f.k * 320
           : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
         mark = this.markSvg(f.r, true, delay);
       } else if (ch === "h") mark = this.markSvg("h");
@@ -1167,7 +1167,26 @@ const App = {
     </div>`;
   },
 
+  /* If a render ever throws, the screen would otherwise freeze mid-paint with
+     dead buttons and no way back. Catch it, say so, and offer an escape. */
   render() {
+    try { this.paint(); }
+    catch (err) {
+      console.error("render failed:", err);
+      const el = document.getElementById("app");
+      if (el) el.innerHTML = `<div class="card">
+        <h2>\u26A0\uFE0F Something jammed</h2>
+        <div class="body">The board couldn't be drawn. Your game is safe on the server \u2014 reopening usually clears it.</div>
+        <div class="row" style="margin-top:12px">
+          <span class="btn primary" onclick="location.reload()">Reload</span>
+          <span class="btn" onclick="location.hash='';location.reload()">Back to home</span>
+        </div>
+        <div class="hint" style="margin-top:10px">${String(err && err.message || err)}</div>
+      </div>`;
+    }
+  },
+
+  paint() {
     const el = document.getElementById("app");
     const st = this.st;
 
