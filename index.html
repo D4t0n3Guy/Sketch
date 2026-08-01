@@ -234,6 +234,15 @@ function setPts(st, p, v) { if (p === "p1") st.pt1 = v; else st.pt2 = v; }
 function setShips(st, p, v) { if (p === "p1") st.sh1 = v; else st.sh2 = v; }
 function setName(st, p, v) { if (p === "p1") st.n1 = v; else st.n2 = v; }
 
+/* A turn can now be several shots long, since a hit buys another go. Collect
+   them so the other player can watch the whole run, in order, when they return.
+   `open` means the streak is still going — don't replay it yet. */
+function pushReel(st, me, act, keepTurn) {
+  const streak = st.rl && st.rl.by === me && st.rl.open;
+  const acts = streak ? [...st.rl.acts, act] : [act];
+  st.rl = { by: me, acts: acts.slice(-12), open: !!keepTurn };
+}
+
 function shipSunk(ship, sa) { return ship.every(i => chAt(sa, i) === "h"); }
 function allSunk(ships, sa) {
   const flat = ships.flat();
@@ -264,6 +273,9 @@ const App = {
   me: null,
   epoch: 0,        // bumped on every local save; invalidates in-flight polls
   resync: false,   // set when a save failed and server truth must be refetched
+  reelTimer: null,
+  replaying: false,
+  reelPos: 0, reelLen: 0,
   view: "home",
   tab: "target",
   mode: "fire",
@@ -315,22 +327,78 @@ const App = {
       label: `${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
     });
     lsSet("sks:seen:" + id, String(res.st.mv));
-    // incoming replay animation
-    const la = res.st.la;
-    if (la && la.by !== this.me && res.st.mv > prevMv && prevMv > 0) {
-      this.anim = { ...la, incoming: true };
-      this.tab = "fleet";
-      setTimeout(() => { this.anim = null; this.render(); }, 4200);
-    }
+    // Their turn is over and it's ours again — roll the tape.
+    const rl = res.st.rl;
+    const replay = !!(rl && rl.by !== this.me && !rl.open
+      && rl.acts && rl.acts.length && res.st.mv > prevMv && prevMv > 0);
+    if (replay) this.tab = "fleet";
     this.view = this.viewFor(res.st);
     if (firstLoad && this.view === "place" && shipsOf(res.st, this.me).length === 0) {
       this.paint = new Set(); this.placeMsg = "";
     }
     this.render();
+    if (replay) this.playReel(rl);
     this.pollStart();
   },
 
   viewFor(st) { return st.ph === "p" ? "place" : "battle"; },
+
+  /* ---------- turn replay ---------- */
+  actMs(a) {
+    if (a.ty === "strike") return 3400;
+    if (a.ty === "sonar") return 2800;
+    const blast = (a.c || []).some(x => x[2] === "b");
+    return blast ? 900 + (a.c.length * 55) + 1400 : 1600;
+  },
+  stopReel() {
+    if (this.reelTimer) clearTimeout(this.reelTimer);
+    this.reelTimer = null;
+    this.replaying = false;
+    this.anim = null;
+    this.render();
+  },
+  replayReel() {
+    const rl = this.st && this.st.rl;
+    if (rl && rl.by !== this.me && !rl.open) this.playReel(rl);
+  },
+  playReel(rl) {
+    if (!rl || !rl.acts || !rl.acts.length) return;
+    if (this.reelTimer) clearTimeout(this.reelTimer);
+    const acts = rl.acts;
+    this.replaying = true;
+    this.reelLen = acts.length;
+    this.tab = "fleet";
+    let k = 0;
+    const step = () => {
+      if (k >= acts.length) {
+        this.reelTimer = null; this.replaying = false; this.anim = null; this.render();
+        return;
+      }
+      const a = acts[k];
+      // Hide the squares that later shots in this same turn will reveal, so the
+      // replay unfolds as it happened instead of showing the finished board.
+      const mask = new Set();
+      for (let j = k + 1; j < acts.length; j++)
+        for (const cell of (acts[j].c || [])) mask.add(cell[0]);
+      this.anim = { ...a, incoming: true, mask };
+      this.reelPos = k + 1;
+      this.render();
+      k++;
+      this.reelTimer = setTimeout(step, this.actMs(a) + 450);
+    };
+    step();
+  },
+
+  reelBtnHtml() {
+    const rl = this.st && this.st.rl;
+    if (!rl || rl.by === this.me || rl.open || !rl.acts || !rl.acts.length) return "";
+    if (this.replaying)
+      return `<div class="row" style="margin-top:8px">
+        <span class="btn small" onclick="App.stopReel()">⏭ Skip — shot ${this.reelPos} of ${this.reelLen}</span></div>`;
+    const n = rl.acts.length;
+    return `<div class="row" style="margin-top:8px">
+      <span class="btn small" onclick="App.replayReel()">▶︎ Replay their turn (${n} shot${n > 1 ? "s" : ""})</span></div>`;
+  },
 
   /* ---------- polling ---------- */
   pollStart() {
@@ -514,6 +582,7 @@ const App = {
       setPts(st, me, ptsOf(st, me) - POWERS.sonar.cost);
       st.t = opp;
       st.la = { by: me, ty: "sonar", c: results, k: [], center: this.sel };
+      pushReel(st, me, st.la, false);
       st.lg = [...st.lg.slice(-4), `📡 ${nameOf(st, me)} scanned the waters`];
       this.anim = { ty: "sonar", c: results, center: this.sel };
       this.sel = null; this.mode = "fire";
@@ -605,6 +674,7 @@ const App = {
 
     st.t = struck ? me : opp;
     st.la = { by: me, ty: mode, d: this.dir, c: results, k: sunkLens };
+    pushReel(st, me, st.la, struck);
     st.lg = [...st.lg.slice(-4), logTxt];
 
     if (allSunk(oppShips, sa)) {
@@ -732,7 +802,8 @@ const App = {
           : anim.ty === "strike" ? 900 + f.k * 240
           : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
           mark = this.markSvg(f.r, true, delay);
-        } else if (ch === "h") mark = this.markSvg("h");
+        } else if (anim.mask && anim.mask.has(i)) mark = "";
+        else if (ch === "h") mark = this.markSvg("h");
         else if (ch === "m") mark = this.markSvg("m");
         cells += `<div class="${cls}">${mark}</div>`;
         continue;
@@ -981,6 +1052,7 @@ const App = {
         <div class="tab ${this.tab==="target"?"active":""}" onclick="App.setTab('target')">🎯 Their waters</div>
         <div class="tab ${this.tab==="fleet"?"active":""}" onclick="App.setTab('fleet')">🚢 Your fleet</div>
       </div>
+      ${this.reelBtnHtml()}
       ${this.boardHtml(this.tab === "target" ? "target" : "fleet")}
       ${controls}
       ${overCard}
