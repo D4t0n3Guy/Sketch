@@ -517,7 +517,7 @@ const App = {
     let sa = saOf(st, opp);
     const oppShips = shipsOf(st, opp);
     const shipCells = new Set(oppShips.flat());
-    const results = []; const sunkLens = []; let gained = 0;
+    const results = []; const sunkLens = []; const wrecks = []; let gained = 0;
     for (const i of cells) {
       if (chAt(sa, i) !== ".") continue;
       const hit = shipCells.has(i);
@@ -525,9 +525,49 @@ const App = {
       results.push([i, hit ? "h" : "m"]);
       if (hit) {
         const ship = findShipAt(oppShips, i);
-        if (ship && shipSunk(ship, sa)) { gained += ship.length; sunkLens.push(ship.length); }
+        if (ship && shipSunk(ship, sa)) {
+          gained += ship.length; sunkLens.push(ship.length); wrecks.push(ship);
+        }
       }
     }
+
+    /* A sunk ship goes up with it: every square touching the wreck takes a hit.
+       Ships are drawn as separate blobs, so anything orthogonally beside a wreck
+       is guaranteed water — only a diagonally-touching ship can be caught, and if
+       the blast finishes that one off, it detonates too. */
+    const blast = [];
+    const spent = new Set();
+    const queue = [...wrecks];
+    while (queue.length) {
+      const wreck = queue.shift();
+      if (spent.has(wreck[0])) continue;
+      spent.add(wreck[0]);
+      const hull = new Set(wreck);
+      const ring = new Set();
+      for (const ci of wreck) {
+        const [wr, wc] = rcOf(ci, s);
+        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+          const nr = wr + dr, nc = wc + dc;
+          if (nr < 0 || nc < 0 || nr >= s || nc >= s) continue;
+          const ni = idxOf(nr, nc, s);
+          if (!hull.has(ni)) ring.add(ni);
+        }
+      }
+      for (const i of ring) {
+        if (chAt(sa, i) !== ".") continue;
+        const hit = shipCells.has(i);
+        sa = chSet(sa, i, hit ? "h" : "m");
+        blast.push([i, hit ? "h" : "m", "b"]);
+        if (hit) {
+          const ship = findShipAt(oppShips, i);
+          if (ship && shipSunk(ship, sa)) {
+            gained += ship.length; sunkLens.push(ship.length); queue.push(ship);
+          }
+        }
+      }
+    }
+    results.push(...blast);
+
     setSA(st, opp, sa);
     setPts(st, me, ptsOf(st, me) + gained);
 
@@ -543,6 +583,7 @@ const App = {
       logTxt = `✈️ ${nameOf(st, me)} called an airstrike${sunkLens.length ? " — ship down!" : ""}`;
     }
     if (gained) logTxt += ` (+${gained}★)`;
+    if (blast.length) logTxt += ` The wreck blew ${blast.length} more square${blast.length > 1 ? "s" : ""} open.`;
     if (struck) logTxt += " Go again!";
 
     st.t = struck ? me : opp;
@@ -557,7 +598,8 @@ const App = {
     this.anim = { ty: mode, d: this.dir, c: results, gained };
     this.sel = null; this.mode = "fire";
     await this.commit();
-    setTimeout(() => { this.anim = null; this.render(); }, mode === "strike" ? 3400 : 1800);
+    setTimeout(() => { this.anim = null; this.render(); },
+      blast.length ? 900 + results.length * 55 + 1400 : mode === "strike" ? 3400 : 1800);
   },
 
   async rematch() {
@@ -655,7 +697,7 @@ const App = {
     const animOnThis =
       anim && ((anim.incoming && variant === "fleet") || (!anim.incoming && variant === "target"));
     const freshMap = {};
-    if (animOnThis && anim.c) anim.c.forEach(([i, r], k) => { freshMap[i] = { r, k }; });
+    if (animOnThis && anim.c) anim.c.forEach(([i, r, b], k) => { freshMap[i] = { r, k, b }; });
 
     let cells = "";
     for (let i = 0; i < s * s; i++) {
@@ -669,7 +711,9 @@ const App = {
         const ch = chAt(saOf(st, me), i);
         if (freshMap[i]) {
           const f = freshMap[i];
-          const delay = anim.ty === "strike" ? 900 + f.k * 240 : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
+          const delay = f.b ? 650 + f.k * 55
+          : anim.ty === "strike" ? 900 + f.k * 240
+          : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
           mark = this.markSvg(f.r, true, delay);
         } else if (ch === "h") mark = this.markSvg("h");
         else if (ch === "m") mark = this.markSvg("m");
@@ -680,7 +724,9 @@ const App = {
       const intel = chAt(intelOf(st, me), i);
       if (freshMap[i]) {
         const f = freshMap[i];
-        const delay = anim.ty === "strike" ? 900 + f.k * 240 : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
+        const delay = f.b ? 650 + f.k * 55
+          : anim.ty === "strike" ? 900 + f.k * 240
+          : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
         mark = this.markSvg(f.r, true, delay);
       } else if (ch === "h") mark = this.markSvg("h");
       else if (ch === "m") mark = this.markSvg("m");
