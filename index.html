@@ -115,6 +115,7 @@
   }
   @keyframes flyA { from { transform: translate(0,0) var(--rot,rotate(0deg)); } to { transform: var(--fly) var(--rot,rotate(0deg)); } }
   .plane { position: absolute; z-index: 5; font-size: 26px; pointer-events: none; animation: flyA 1.4s linear both; }
+  .mineMark { font-size: 15px; opacity: 0.55; line-height: 1; }
   @keyframes nukeA { 0% { transform: translate(-50%,-50%) scale(0.15); opacity: 0; }
     25% { opacity: 1; } 100% { transform: translate(-50%,-50%) scale(2.8); opacity: 0; } }
   .nuke { position: absolute; z-index: 6; font-size: 38px; pointer-events: none;
@@ -152,13 +153,24 @@
    ================================================================ */
 "use strict";
 
+/* aim: where you tap — "enemy", "own", or "none" (fires straight away).
+   kind: "act" spends your turn, "sup" is a buy-and-keep-shooting support move. */
 const POWERS = {
-  sonar:  { cost: 3, label: "Sonar" },
-  strike: { cost: 5, label: "Airstrike" },
-  torp:   { cost: 5, label: "Torpedo" },
-  nuke:   { cost: 8, label: "Nuke" },
+  radio:  { cost: 2, icon: "\uD83D\uDCFB", label: "Intercept", aim: "none",  kind: "sup" },
+  mine:   { cost: 3, icon: "\u2693",       label: "Mine",      aim: "own",   kind: "act" },
+  sonar:  { cost: 3, icon: "\uD83D\uDCE1", label: "Sonar",     aim: "enemy", kind: "act" },
+  spot:   { cost: 3, icon: "\uD83D\uDE81", label: "Spotter",   aim: "none",  kind: "sup" },
+  repair: { cost: 4, icon: "\uD83D\uDD27", label: "Repair",    aim: "own",   kind: "act" },
+  depth:  { cost: 5, icon: "\uD83C\uDF0A", label: "Charges",   aim: "enemy", kind: "act" },
+  smoke:  { cost: 5, icon: "\uD83D\uDCA8", label: "Smoke",     aim: "none",  kind: "sup" },
+  strike: { cost: 5, icon: "\u2708\uFE0F", label: "Strike",    aim: "enemy", kind: "act" },
+  torp:   { cost: 5, icon: "\uD83D\uDEE5", label: "Torpedo",   aim: "enemy", kind: "act" },
+  dbl:    { cost: 6, icon: "\u26A1",       label: "Double",    aim: "none",  kind: "sup" },
+  storm:  { cost: 7, icon: "\uD83C\uDF00", label: "Storm",     aim: "none",  kind: "act" },
+  nuke:   { cost: 8, icon: "\u2622\uFE0F", label: "Nuke",      aim: "enemy", kind: "act" },
 };
 const CHEAPEST = Math.min(...Object.values(POWERS).map(p => p.cost));
+const aimOf = m => m === "fire" ? "enemy" : (POWERS[m] ? POWERS[m].aim : "enemy");
 
 /* ---------- api ---------- */
 async function api(payload) {
@@ -242,6 +254,12 @@ const ptsOf = (st, p) => p === "p1" ? st.pt1 : st.pt2;
 function setSA(st, p, v) { if (p === "p1") st.sa1 = v; else st.sa2 = v; }
 function setIntel(st, p, v) { if (p === "p1") st.i1 = v; else st.i2 = v; }
 function setPts(st, p, v) { if (p === "p1") st.pt1 = v; else st.pt2 = v; }
+const bfOf = (st, p) => (p === "p1" ? st.bf1 : st.bf2) || {};
+function setBf(st, p, v) { if (p === "p1") st.bf1 = v; else st.bf2 = v; }
+const mnOf = (st, p) => (p === "p1" ? st.mn1 : st.mn2) || [];
+function setMn(st, p, v) { if (p === "p1") st.mn1 = v; else st.mn2 = v; }
+/* Nothing to replay for a turn spent on your own side of the board. */
+function blankReel(st, me) { st.rl = { by: me, acts: [], open: false }; }
 function setShips(st, p, v) { if (p === "p1") st.sh1 = v; else st.sh2 = v; }
 function setName(st, p, v) { if (p === "p1") st.n1 = v; else st.n2 = v; }
 
@@ -271,6 +289,8 @@ function freshState(s, b, n1, n2) {
     sa1: blank, sa2: blank,
     i1: blank, i2: blank,
     pt1: 0, pt2: 0,
+    bf1: {}, bf2: {},      // armed support buffs
+    mn1: [], mn2: [],      // mines laid in your own waters
     la: null, lg: [],
   };
 }
@@ -363,6 +383,9 @@ const App = {
     if (a.ty === "sonar") return 2800;
     if (a.ty === "torp") return 300 + n * 100 + 1200;
     if (a.ty === "nuke") return 800 + n * 60 + 1500;
+    if (a.ty === "storm") return 400 + n * 130 + 1200;
+    if (a.ty === "depth") return 400 + n * 320 + 1200;
+    if (a.ty === "repair" || a.ty === "mine") return 900;
     return 1600;
   },
   stopReel() {
@@ -558,19 +581,69 @@ const App = {
   setMode(m) {
     const st = this.st;
     if (m === "sonar" && ptsOf(st, this.me) < POWERS.sonar.cost) return;
-    if (m === "strike" && ptsOf(st, this.me) < POWERS.strike.cost) return;
-    if (m === "torp" && ptsOf(st, this.me) < POWERS.torp.cost) return;
-    if (m === "nuke" && ptsOf(st, this.me) < POWERS.nuke.cost) return;
-    this.mode = m; this.sel = null; this.render();
+    if (POWERS[m] && ptsOf(st, this.me) < POWERS[m].cost) return;
+    this.mode = m; this.sel = null; this.netErr = "";
+    const a = aimOf(m);
+    if (a === "own") this.tab = "fleet";
+    else if (a === "enemy") this.tab = "target";
+    this.render();
   },
   setDir(d) { this.dir = d; this.render(); },
 
   tapTarget(i) {
     const st = this.st;
     if (st.ph !== "b" || st.t !== this.me || this.saving) return;
+    if (aimOf(this.mode) !== "enemy") return;
     if (this.mode === "fire" && chAt(saOf(st, other(this.me)), i) !== ".") return;
     this.sel = (this.sel === i) ? null : i;
     this.render();
+  },
+
+  tapOwn(i) {
+    const st = this.st;
+    if (!st || st.ph !== "b" || st.t !== this.me || this.saving) return;
+    if (aimOf(this.mode) !== "own") return;
+    this.sel = (this.sel === i) ? null : i;
+    this.netErr = "";
+    this.render();
+  },
+
+  async useSupport(m) {
+    const st = this.st, me = this.me, opp = other(me);
+    if (!st || st.ph !== "b" || st.t !== me || this.saving) return;
+    if (ptsOf(st, me) < POWERS[m].cost) return;
+    const bf = { ...bfOf(st, me) };
+    let line = "";
+
+    if (m === "radio") {
+      const afloat = shipsOf(st, opp).filter(sh => !shipSunk(sh, saOf(st, opp)));
+      let big = afloat.length ? Math.max(...afloat.map(sh => sh.length)) : 0;
+      const oppBf = { ...bfOf(st, opp) };
+      let lied = false;
+      if (oppBf.smoke) {                       // smoke feeds the intercept a false number
+        delete oppBf.smoke; setBf(st, opp, oppBf); lied = true;
+        big = Math.max(1, big + (Math.random() < 0.5 ? -1 : 1));
+      }
+      line = afloat.length
+        ? `\uD83D\uDCFB ${nameOf(st, me)} intercepted chatter \u2014 largest ship still afloat is ${big} long`
+        : `\uD83D\uDCFB ${nameOf(st, me)} intercepted chatter \u2014 nothing left afloat`;
+      if (lied) line += " (or so the transmission said)";
+    } else if (m === "spot") {
+      bf.spot = 1;
+      line = `\uD83D\uDE81 ${nameOf(st, me)} put a spotter in the air`;
+    } else if (m === "smoke") {
+      bf.smoke = 1;
+      line = `\uD83D\uDCA8 ${nameOf(st, me)} laid a smoke screen`;
+    } else if (m === "dbl") {
+      bf.dbl = 1;
+      line = `\u26A1 ${nameOf(st, me)} loaded a second round`;
+    }
+
+    setBf(st, me, bf);
+    setPts(st, me, ptsOf(st, me) - POWERS[m].cost);
+    st.lg = [...st.lg.slice(-4), line];
+    this.netErr = "";
+    await this.commit();       // turn stays with you — take your shot
   },
 
   async doAction() {
@@ -589,23 +662,88 @@ const App = {
         if (nr >= 0 && nc >= 0 && nr < s && nc < s) cells.push(idxOf(nr, nc, s));
       }
       const shipCells = new Set(shipsOf(st, opp).flat());
+      // A smoke screen laid by the defender feeds this sweep garbage.
+      const oppBf = { ...bfOf(st, opp) };
+      const smoked = !!oppBf.smoke;
+      if (smoked) { delete oppBf.smoke; setBf(st, opp, oppBf); }
       let intel = intelOf(st, me);
       const results = cells.map(i => {
-        const has = shipCells.has(i);
+        const has = smoked ? !shipCells.has(i) : shipCells.has(i);
         intel = chSet(intel, i, has ? "y" : "n");
         return [i, has ? "p" : "c"];
       });
       setIntel(st, me, intel);
       setPts(st, me, ptsOf(st, me) - POWERS.sonar.cost);
       st.t = opp;
-      st.la = { by: me, ty: "sonar", c: results, k: [], center: this.sel };
+      st.la = { by: me, ty: "sonar", c: results, k: [], center: aim };
       pushReel(st, me, st.la, false);
-      st.lg = [...st.lg.slice(-4), `📡 ${nameOf(st, me)} scanned the waters`];
+      st.lg = [...st.lg.slice(-4), `\uD83D\uDCE1 ${nameOf(st, me)} scanned the waters` +
+        (smoked ? ` \u2014 but \uD83D\uDCA8 ${nameOf(st, opp)}'s smoke fouled the read` : "")];
       this.anim = { ty: "sonar", c: results, center: this.sel };
       this.sel = null; this.mode = "fire";
       await this.commit();
       setTimeout(() => { this.anim = null; this.render(); }, 2800);
       return;
+    } else if (mode === "repair") {
+      if (ptsOf(st, me) < POWERS.repair.cost) return;
+      const mySa = saOf(st, me);
+      if (chAt(mySa, aim) !== "h") { this.netErr = "Pick a damaged square of your own fleet."; this.render(); return; }
+      const ship = findShipAt(shipsOf(st, me), aim);
+      if (!ship || shipSunk(ship, mySa)) { this.netErr = "That ship is gone \u2014 no patching a wreck."; this.render(); return; }
+      setSA(st, me, chSet(mySa, aim, "."));
+      setPts(st, me, ptsOf(st, me) - POWERS.repair.cost);
+      st.t = opp;
+      st.la = { by: me, ty: "repair", c: [], k: [] };
+      blankReel(st, me);
+      st.lg = [...st.lg.slice(-4), `\uD83D\uDD27 ${nameOf(st, me)}'s crew patched a hull breach`];
+      this.sel = null; this.mode = "fire"; this.netErr = "";
+      await this.commit();
+      return;
+    } else if (mode === "mine") {
+      if (ptsOf(st, me) < POWERS.mine.cost) return;
+      const mines = mnOf(st, me);
+      if (chAt(saOf(st, me), aim) !== "." || mines.includes(aim) || shipsOf(st, me).flat().includes(aim)) {
+        this.netErr = "Mines go in open water you still hold."; this.render(); return;
+      }
+      setMn(st, me, [...mines, aim]);
+      setPts(st, me, ptsOf(st, me) - POWERS.mine.cost);
+      st.t = opp;
+      st.la = { by: me, ty: "mine", c: [], k: [] };
+      blankReel(st, me);
+      st.lg = [...st.lg.slice(-4), `\u2693 ${nameOf(st, me)} slipped a mine into the shallows`];
+      this.sel = null; this.mode = "fire"; this.netErr = "";
+      await this.commit();
+      return;
+    } else if (mode === "depth") {
+      if (ptsOf(st, me) < POWERS.depth.cost) return;
+      // Three charges scattered blind inside a 5x5 box — no aiming the individual hits.
+      const [r, c] = rcOf(aim, s);
+      const box = [];
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) {
+        const nr = r + dr, nc = c + dc;
+        if (nr < 0 || nc < 0 || nr >= s || nc >= s) continue;
+        const ni = idxOf(nr, nc, s);
+        if (chAt(saOf(st, opp), ni) === ".") box.push(ni);
+      }
+      for (let k = box.length - 1; k > 0; k--) {
+        const j = Math.floor(Math.random() * (k + 1));
+        [box[k], box[j]] = [box[j], box[k]];
+      }
+      cells = box.slice(0, 3);
+      setPts(st, me, ptsOf(st, me) - POWERS.depth.cost);
+    } else if (mode === "storm") {
+      if (ptsOf(st, me) < POWERS.storm.cost) return;
+      // One random unknown square in every row.
+      const oppSa = saOf(st, opp);
+      for (let r = 0; r < s; r++) {
+        const open = [];
+        for (let c = 0; c < s; c++) {
+          const ni = idxOf(r, c, s);
+          if (chAt(oppSa, ni) === ".") open.push(ni);
+        }
+        if (open.length) cells.push(open[Math.floor(Math.random() * open.length)]);
+      }
+      setPts(st, me, ptsOf(st, me) - POWERS.storm.cost);
     } else if (mode === "torp") {
       if (ptsOf(st, me) < POWERS.torp.cost) return;
       // The sub launches from the edge and runs the lane until something stops it.
@@ -694,14 +832,40 @@ const App = {
     setSA(st, opp, sa);
     setPts(st, me, ptsOf(st, me) + gained);
 
+    /* Mines belong to the defender: shooting one costs the attacker their momentum. */
+    const defMines = mnOf(st, opp);
+    const tripped = defMines.filter(m => results.some(x => x[0] === m));
+    if (tripped.length) setMn(st, opp, defMines.filter(m => !tripped.includes(m)));
+
     // A plain shot that connects earns another go. Airstrikes don't.
-    const struck = mode === "fire" && results.length && results[0][1] === "h";
+    const myBf = { ...bfOf(st, me) };
+    let struck = mode === "fire" && results.length && results[0][1] === "h";
+    let dblUsed = false, spotTxt = "";
+    if (mode === "fire" && !struck && myBf.dbl) { struck = true; dblUsed = true; delete myBf.dbl; }
+    if (mode === "fire" && !results.some(x => x[1] === "h") && myBf.spot) {
+      delete myBf.spot;
+      const [sr, sc] = rcOf(aim, s);
+      const hull = new Set(shipsOf(st, opp).flat());
+      let near = false;
+      for (let dr = -1; dr <= 1 && !near; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const nr = sr + dr, nc = sc + dc;
+        if (nr < 0 || nc < 0 || nr >= s || nc >= s) continue;
+        if (hull.has(idxOf(nr, nc, s))) { near = true; break; }
+      }
+      spotTxt = near ? " \uD83D\uDE81 Spotter: something's right beside it!" : " \uD83D\uDE81 Spotter: all clear nearby.";
+    }
+    if (tripped.length) struck = false;
+    setBf(st, me, myBf);
 
     let logTxt;
     if (mode === "fire") {
       logTxt = struck
         ? `💥 ${nameOf(st, me)} hit${sunkLens.length ? " and SUNK a ship!" : "!"}`
         : `🌊 ${nameOf(st, me)} splashed a miss`;
+    } else if (mode === "depth") {
+      logTxt = `\uD83C\uDF0A ${nameOf(st, me)} rolled depth charges${sunkLens.length ? " \u2014 ship down!" : ""}`;
+    } else if (mode === "storm") {
+      logTxt = `\uD83C\uDF00 ${nameOf(st, me)} called down a storm${sunkLens.length ? " \u2014 ship down!" : ""}`;
     } else if (mode === "torp") {
       const landed = results.some(x => x[1] === "h");
       logTxt = `🛥 ${nameOf(st, me)} loosed a torpedo — ${landed
@@ -714,7 +878,10 @@ const App = {
     }
     if (gained) logTxt += ` (+${gained}★)`;
     if (blast.length) logTxt += ` The wreck blew ${blast.length} more square${blast.length > 1 ? "s" : ""} open.`;
-    if (struck) logTxt += " Go again!";
+    if (tripped.length) logTxt += ` \u2693 MINE! ${nameOf(st, opp)}'s trap ends the run.`;
+    if (spotTxt) logTxt += spotTxt;
+    if (dblUsed) logTxt += " \u26A1 Double tap \u2014 another shot!";
+    else if (struck) logTxt += " Go again!";
 
     st.t = struck ? me : opp;
     st.la = { by: me, ty: mode, d: this.dir, c: results, k: sunkLens, center: aim };
@@ -840,17 +1007,28 @@ const App = {
       }
       if (variant === "fleet") {
         const ch = chAt(saOf(st, me), i);
+        const ownAim = st.ph === "b" && st.t === me && aimOf(this.mode) === "own" && !this.replaying;
         if (freshMap[i]) {
           const f = freshMap[i];
           const delay = f.b ? 650 + f.k * 55
           : anim.ty === "strike" ? 900 + f.k * 240
           : anim.ty === "torp" ? 280 + f.k * 100
           : anim.ty === "nuke" ? 780 + f.k * 60
+          : anim.ty === "storm" ? 380 + f.k * 130
+          : anim.ty === "depth" ? 380 + f.k * 320
+          : anim.ty === "storm" ? 380 + f.k * 130
+          : anim.ty === "depth" ? 380 + f.k * 320
           : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
           mark = this.markSvg(f.r, true, delay);
         } else if (anim.mask && anim.mask.has(i)) mark = "";
         else if (ch === "h") mark = this.markSvg("h");
         else if (ch === "m") mark = this.markSvg("m");
+        if (!mark && mnOf(st, me).includes(i)) mark = `<span class="mineMark">\u2693</span>`;
+        if (ownAim) {
+          if (this.sel === i) cls += " sel";
+          cells += `<div class="${cls}" onclick="App.tapOwn(${i})">${mark}</div>`;
+          continue;
+        }
         cells += `<div class="${cls}">${mark}</div>`;
         continue;
       }
@@ -872,6 +1050,7 @@ const App = {
         const [sr, sc] = rcOf(this.sel, s), [r, c] = rcOf(i, s);
         if ((this.mode === "sonar" || this.mode === "nuke") && Math.abs(r-sr) <= 1 && Math.abs(c-sc) <= 1) cls += " preview";
         if (this.mode === "torp" && ((this.dir === "row" && r === sr) || (this.dir === "col" && c === sc))) cls += " preview";
+        if (this.mode === "depth" && Math.abs(r-sr) <= 2 && Math.abs(c-sc) <= 2) cls += " preview";
         if (this.mode === "strike" &&
             ((this.dir === "row" && r === sr && Math.abs(c-sc) <= 2) ||
              (this.dir === "col" && c === sc && Math.abs(r-sr) <= 2))) cls += " preview";
@@ -953,10 +1132,20 @@ const App = {
       Draw your fleet with your ship points — one big battleship, a swarm of tiny boats, anything, as long as ships are straight lines.
       Take turns firing one shot. <b>Land a hit and you shoot again</b> — keep going until you miss.
       Sink a ship, pocket its length in ★.<br><br>
+<b>Attacks</b> (these use your turn):<br>
+      <b>⚓ Mine (${POWERS.mine.cost}★)</b> — hide a mine in your own water. Shoot it and their run ends on the spot.<br>
       <b>📡 Sonar (${POWERS.sonar.cost}★)</b> — scan a 3×3 area, no damage.<br>
-      <b>🛥 Torpedo (${POWERS.torp.cost}★)</b> — a sub runs a whole row or column from the edge and detonates on the first ship it meets.<br>
-      <b>✈️ Airstrike (${POWERS.strike.cost}★)</b> — bomb 5 cells in a line.<br>
+      <b>🔧 Repair (${POWERS.repair.cost}★)</b> — patch one damaged square on a ship that hasn't sunk.<br>
+      <b>🌊 Charges (${POWERS.depth.cost}★)</b> — three blind hits scattered in a 5×5 box.<br>
+      <b>✈️ Strike (${POWERS.strike.cost}★)</b> — bomb 5 cells in a line.<br>
+      <b>🛥 Torpedo (${POWERS.torp.cost}★)</b> — a sub runs a whole row or column and detonates on the first ship it meets.<br>
+      <b>🌀 Storm (${POWERS.storm.cost}★)</b> — one random square in every row takes a hit.<br>
       <b>☢️ Nuke (${POWERS.nuke.cost}★)</b> — flattens a full 3×3 block. Save up.<br><br>
+      <b>Support</b> (buy, then still take your shot):<br>
+      <b>📻 Intercept (${POWERS.radio.cost}★)</b> — learn the size of their biggest ship still afloat.<br>
+      <b>🚁 Spotter (${POWERS.spot.cost}★)</b> — your next miss tells you if a ship sits beside it.<br>
+      <b>💨 Smoke (${POWERS.smoke.cost}★)</b> — their next sonar or intercept comes back a lie.<br>
+      <b>⚡ Double (${POWERS.dbl.cost}★)</b> — your next shot earns another go even if it misses.<br><br>
       No timers. The board updates by itself — the 💬 button just texts them a "your move" nudge.
       One link per game: whoever opens it on their own phone gets their own side, and it stays theirs.
     </div></div>`;
@@ -1071,40 +1260,52 @@ const App = {
       : myTurn ? `<span style="color:#c23b32">Your move!</span>` : `<span style="opacity:0.6">Their move…</span>`;
 
     let controls = "";
-    if (myTurn && this.tab === "target") {
+    if (myTurn) {
       const pts = ptsOf(st, me);
       const canPower = pts >= CHEAPEST;
-      const chip = (m, icon, name) => `<span class="btn small ${this.mode===m?"primary":""} ${pts<POWERS[m].cost?"dim":""}" onclick="App.setMode('${m}')">${icon} ${name} ${POWERS[m].cost}★</span>`;
+      const bf = bfOf(st, me);
+      const chip = m => {
+        const P = POWERS[m];
+        return `<span class="btn small ${this.mode===m?"primary":""} ${pts<P.cost?"dim":""}" onclick="App.${P.kind==="sup"?`useSupport('${m}')`:`setMode('${m}')`}">${P.icon} ${P.label} ${P.cost}★</span>`;
+      };
+      const acts = Object.keys(POWERS).filter(m => POWERS[m].kind === "act");
+      const sups = Object.keys(POWERS).filter(m => POWERS[m].kind === "sup");
+      const armed = [bf.spot ? "🚁 spotter up" : "", bf.smoke ? "💨 smoke laid" : "", bf.dbl ? "⚡ second round" : ""]
+        .filter(Boolean).join(" · ");
+      const aim = aimOf(this.mode);
+      const ready = aim === "none" || this.sel != null;
+      const label = this.saving ? "Saving…"
+        : this.mode==="fire" ? "Fire! 💥"
+        : this.mode==="sonar" ? "Ping! 📡"
+        : this.mode==="torp" ? "Launch! 🛥"
+        : this.mode==="nuke" ? "Drop it! ☢️"
+        : this.mode==="depth" ? "Roll them! 🌊"
+        : this.mode==="storm" ? "Summon it! 🌀"
+        : this.mode==="repair" ? "Patch it! 🔧"
+        : this.mode==="mine" ? "Lay it! ⚓" : "Bombs away! ✈️";
+      const hint = aim === "none" ? "No aiming needed — hit the button"
+        : aim === "own" ? (this.mode==="repair"
+            ? "Tap a damaged square of your own fleet to patch"
+            : "Tap open water in your own grid to hide the mine")
+        : this.mode==="torp" ? (this.sel==null ? "Tap any square to pick the lane — the torpedo runs it from the edge"
+                                               : "Lane set — it stops at the first ship it meets")
+        : this.sel==null ? "Tap a square on their waters to aim"
+        : "Locked on — tap the button above to shoot";
       controls = `
         ${canPower ? `<div class="row" style="margin-top:10px">
           <span class="btn small ${this.mode==="fire"?"primary":""}" onclick="App.setMode('fire')">🎯 Shot</span>
-          ${chip("sonar", "📡", "Sonar")}
-          ${chip("torp", "🛥", "Torpedo")}
-          ${chip("strike", "✈️", "Strike")}
-          ${chip("nuke", "☢️", "Nuke")}
-        </div>` : ""}
+          ${acts.map(chip).join("")}
+        </div>
+        <div class="row" style="margin-top:6px">${sups.map(chip).join("")}</div>` : ""}
+        ${armed ? `<div class="hint" style="margin-top:6px">Armed: ${armed}</div>` : ""}
         ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
           <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
           <span class="btn small ${this.dir==="col"?"primary":""}" onclick="App.setDir('col')">↕︎ Down</span>
         </div>` : ""}
         <div class="row" style="margin-top:10px">
-          <span class="btn primary big" style="max-width:280px;${this.sel==null||this.saving?"opacity:0.4;pointer-events:none":""}" onclick="App.doAction()">
-            ${this.saving ? "Saving…"
-              : this.mode==="fire" ? "Fire! 💥"
-              : this.mode==="sonar" ? "Ping! 📡"
-              : this.mode==="torp" ? "Launch! 🛥"
-              : this.mode==="nuke" ? "Drop it! ☢️" : "Bombs away! ✈️"}
-          </span>
+          <span class="btn primary big" style="max-width:280px;${!ready||this.saving?"opacity:0.4;pointer-events:none":""}" onclick="App.doAction()">${label}</span>
         </div>
-        <div class="hint">${
-          this.mode==="torp"
-            ? (this.sel==null ? "Tap any square to pick the lane — the torpedo runs it from the edge"
-                              : "Lane set — the torpedo stops at the first ship it meets")
-            : this.sel==null ? "Tap a square on their waters to aim"
-            : "Locked on — tap the button above to shoot"}</div>`;
-    } else if (myTurn && this.tab === "fleet") {
-      controls = `<div class="hint" style="margin-top:10px">Flip to <b>Their waters</b> to take your shot →
-        <span class="btn small primary" onclick="App.setTab('target')">Aim 🎯</span></div>`;
+        <div class="hint">${hint}</div>`;
     } else if (st.ph === "b") {
       controls = `<div style="margin-top:10px"></div>` +
         this.nudgeHtml(`Waiting for ${nameOf(st, opp) || "them"} — the board updates by itself. Impatient?`);
