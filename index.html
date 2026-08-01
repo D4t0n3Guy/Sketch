@@ -115,6 +115,14 @@
   }
   @keyframes flyA { from { transform: translate(0,0) var(--rot,rotate(0deg)); } to { transform: var(--fly) var(--rot,rotate(0deg)); } }
   .plane { position: absolute; z-index: 5; font-size: 26px; pointer-events: none; animation: flyA 1.4s linear both; }
+  @keyframes nukeA { 0% { transform: translate(-50%,-50%) scale(0.15); opacity: 0; }
+    25% { opacity: 1; } 100% { transform: translate(-50%,-50%) scale(2.8); opacity: 0; } }
+  .nuke { position: absolute; z-index: 6; font-size: 38px; pointer-events: none;
+    animation: nukeA 1.9s ease-out both; animation-delay: 0.45s; }
+  @keyframes wakeA { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .wake { position: absolute; z-index: 4; height: 3px; background: rgba(62,111,176,0.45);
+    transform-origin: left center; pointer-events: none; border-radius: 2px;
+    animation: wakeA 1.5s linear both; }
   @keyframes floatUp { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-46px); opacity: 0; } }
   .floater {
     position: absolute; z-index: 6; pointer-events: none;
@@ -147,7 +155,10 @@
 const POWERS = {
   sonar:  { cost: 3, label: "Sonar" },
   strike: { cost: 5, label: "Airstrike" },
+  torp:   { cost: 5, label: "Torpedo" },
+  nuke:   { cost: 8, label: "Nuke" },
 };
+const CHEAPEST = Math.min(...Object.values(POWERS).map(p => p.cost));
 
 /* ---------- api ---------- */
 async function api(payload) {
@@ -345,10 +356,14 @@ const App = {
 
   /* ---------- turn replay ---------- */
   actMs(a) {
+    const n = (a.c || []).length;
+    const blast = (a.c || []).some(x => x[2] === "b");
+    if (blast) return 900 + n * 55 + 1400;
     if (a.ty === "strike") return 3400;
     if (a.ty === "sonar") return 2800;
-    const blast = (a.c || []).some(x => x[2] === "b");
-    return blast ? 900 + (a.c.length * 55) + 1400 : 1600;
+    if (a.ty === "torp") return 300 + n * 100 + 1200;
+    if (a.ty === "nuke") return 800 + n * 60 + 1500;
+    return 1600;
   },
   stopReel() {
     if (this.reelTimer) clearTimeout(this.reelTimer);
@@ -544,6 +559,8 @@ const App = {
     const st = this.st;
     if (m === "sonar" && ptsOf(st, this.me) < POWERS.sonar.cost) return;
     if (m === "strike" && ptsOf(st, this.me) < POWERS.strike.cost) return;
+    if (m === "torp" && ptsOf(st, this.me) < POWERS.torp.cost) return;
+    if (m === "nuke" && ptsOf(st, this.me) < POWERS.nuke.cost) return;
     this.mode = m; this.sel = null; this.render();
   },
   setDir(d) { this.dir = d; this.render(); },
@@ -559,7 +576,7 @@ const App = {
   async doAction() {
     const st = this.st, me = this.me, opp = other(me);
     if (st.ph !== "b" || st.t !== me || this.sel == null || this.saving) return;
-    const s = st.s, mode = this.mode;
+    const s = st.s, mode = this.mode, aim = this.sel;
     let cells = [];
 
     if (mode === "fire") {
@@ -589,6 +606,26 @@ const App = {
       await this.commit();
       setTimeout(() => { this.anim = null; this.render(); }, 2800);
       return;
+    } else if (mode === "torp") {
+      if (ptsOf(st, me) < POWERS.torp.cost) return;
+      // The sub launches from the edge and runs the lane until something stops it.
+      const [r, c] = rcOf(aim, s);
+      const hull = new Set(shipsOf(st, opp).flat());
+      const sa0 = saOf(st, opp);
+      for (let k = 0; k < s; k++) {
+        const ni = this.dir === "col" ? idxOf(k, c, s) : idxOf(r, k, s);
+        cells.push(ni);
+        if (hull.has(ni) && chAt(sa0, ni) === ".") break;   // torpedo detonates here
+      }
+      setPts(st, me, ptsOf(st, me) - POWERS.torp.cost);
+    } else if (mode === "nuke") {
+      if (ptsOf(st, me) < POWERS.nuke.cost) return;
+      const [r, c] = rcOf(aim, s);
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nc >= 0 && nr < s && nc < s) cells.push(idxOf(nr, nc, s));
+      }
+      setPts(st, me, ptsOf(st, me) - POWERS.nuke.cost);
     } else if (mode === "strike") {
       if (ptsOf(st, me) < POWERS.strike.cost) return;
       const [r, c] = rcOf(this.sel, s);
@@ -665,6 +702,13 @@ const App = {
       logTxt = struck
         ? `💥 ${nameOf(st, me)} hit${sunkLens.length ? " and SUNK a ship!" : "!"}`
         : `🌊 ${nameOf(st, me)} splashed a miss`;
+    } else if (mode === "torp") {
+      const landed = results.some(x => x[1] === "h");
+      logTxt = `🛥 ${nameOf(st, me)} loosed a torpedo — ${landed
+        ? (sunkLens.length ? "direct hit, ship down!" : "it found steel!")
+        : "it ran the lane and found nothing"}`;
+    } else if (mode === "nuke") {
+      logTxt = `☢️ ${nameOf(st, me)} dropped the big one${sunkLens.length ? " — devastating!" : ""}`;
     } else {
       logTxt = `✈️ ${nameOf(st, me)} called an airstrike${sunkLens.length ? " — ship down!" : ""}`;
     }
@@ -673,7 +717,7 @@ const App = {
     if (struck) logTxt += " Go again!";
 
     st.t = struck ? me : opp;
-    st.la = { by: me, ty: mode, d: this.dir, c: results, k: sunkLens };
+    st.la = { by: me, ty: mode, d: this.dir, c: results, k: sunkLens, center: aim };
     pushReel(st, me, st.la, struck);
     st.lg = [...st.lg.slice(-4), logTxt];
 
@@ -686,7 +730,7 @@ const App = {
     this.sel = null; this.mode = "fire";
     await this.commit();
     setTimeout(() => { this.anim = null; this.render(); },
-      blast.length ? 900 + results.length * 55 + 1400 : mode === "strike" ? 3400 : 1800);
+      blast.length ? 900 + results.length * 55 + 1400 : this.actMs(st.la));
   },
 
   async rematch() {
@@ -800,6 +844,8 @@ const App = {
           const f = freshMap[i];
           const delay = f.b ? 650 + f.k * 55
           : anim.ty === "strike" ? 900 + f.k * 240
+          : anim.ty === "torp" ? 280 + f.k * 100
+          : anim.ty === "nuke" ? 780 + f.k * 60
           : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
           mark = this.markSvg(f.r, true, delay);
         } else if (anim.mask && anim.mask.has(i)) mark = "";
@@ -814,6 +860,8 @@ const App = {
         const f = freshMap[i];
         const delay = f.b ? 650 + f.k * 55
           : anim.ty === "strike" ? 900 + f.k * 240
+          : anim.ty === "torp" ? 280 + f.k * 100
+          : anim.ty === "nuke" ? 780 + f.k * 60
           : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
         mark = this.markSvg(f.r, true, delay);
       } else if (ch === "h") mark = this.markSvg("h");
@@ -822,7 +870,8 @@ const App = {
       else if (intel === "n") mark = this.markSvg("c");
       if (this.sel != null && st.t === me && st.ph === "b") {
         const [sr, sc] = rcOf(this.sel, s), [r, c] = rcOf(i, s);
-        if (this.mode === "sonar" && Math.abs(r-sr) <= 1 && Math.abs(c-sc) <= 1) cls += " preview";
+        if ((this.mode === "sonar" || this.mode === "nuke") && Math.abs(r-sr) <= 1 && Math.abs(c-sc) <= 1) cls += " preview";
+        if (this.mode === "torp" && ((this.dir === "row" && r === sr) || (this.dir === "col" && c === sc))) cls += " preview";
         if (this.mode === "strike" &&
             ((this.dir === "row" && r === sr && Math.abs(c-sc) <= 2) ||
              (this.dir === "col" && c === sc && Math.abs(r-sr) <= 2))) cls += " preview";
@@ -853,6 +902,24 @@ const App = {
         extras += `<div class="plane" style="top:${r*px+px/2-15}px; left:-34px; --fly:translate(${boardPx+70}px,0);">✈️</div>`;
       else
         extras += `<div class="plane" style="left:${c*px+px/2-15}px; top:-34px; --rot:rotate(90deg); --fly:translate(0,${boardPx+70}px);">✈️</div>`;
+    }
+    if (animOnThis && anim.ty === "torp" && anim.c && anim.c.length) {
+      const [r, c] = rcOf(anim.c[0][0], s);
+      const horiz = (anim.d || "row") === "row";
+      const runPx = anim.c.length * px;
+      if (horiz) {
+        extras += `<div class="plane" style="top:${r*px+px/2-14}px; left:-30px; --fly:translate(${runPx+30}px,0);">🛥</div>`;
+        extras += `<div class="wake" style="top:${r*px+px/2}px; left:0; width:${runPx}px;"></div>`;
+      } else {
+        extras += `<div class="plane" style="left:${c*px+px/2-14}px; top:-30px; --rot:rotate(90deg); --fly:translate(0,${runPx+30}px);">🛥</div>`;
+        extras += `<div class="wake" style="left:${c*px+px/2}px; top:0; width:${runPx}px;
+          transform-origin:left center; rotate:90deg;"></div>`;
+      }
+    }
+    if (animOnThis && anim.ty === "nuke" && anim.center != null) {
+      const [r, c] = rcOf(anim.center, s);
+      extras += `<div class="plane" style="top:${Math.max(r*px+px/2-40,-30)}px; left:-34px; --fly:translate(${boardPx+70}px,0);">✈️</div>`;
+      extras += `<div class="nuke" style="left:${c*px+px/2}px; top:${r*px+px/2}px;">💥</div>`;
     }
     if (animOnThis && anim.ty === "sonar" && anim.center != null) {
       const [r, c] = rcOf(anim.center, s);
@@ -887,7 +954,9 @@ const App = {
       Take turns firing one shot. <b>Land a hit and you shoot again</b> — keep going until you miss.
       Sink a ship, pocket its length in ★.<br><br>
       <b>📡 Sonar (${POWERS.sonar.cost}★)</b> — scan a 3×3 area, no damage.<br>
-      <b>✈️ Airstrike (${POWERS.strike.cost}★)</b> — bomb 5 cells in a line.<br><br>
+      <b>🛥 Torpedo (${POWERS.torp.cost}★)</b> — a sub runs a whole row or column from the edge and detonates on the first ship it meets.<br>
+      <b>✈️ Airstrike (${POWERS.strike.cost}★)</b> — bomb 5 cells in a line.<br>
+      <b>☢️ Nuke (${POWERS.nuke.cost}★)</b> — flattens a full 3×3 block. Save up.<br><br>
       No timers. The board updates by itself — the 💬 button just texts them a "your move" nudge.
       One link per game: whoever opens it on their own phone gets their own side, and it stays theirs.
     </div></div>`;
@@ -1004,23 +1073,35 @@ const App = {
     let controls = "";
     if (myTurn && this.tab === "target") {
       const pts = ptsOf(st, me);
-      const canPower = pts >= Math.min(POWERS.sonar.cost, POWERS.strike.cost);
+      const canPower = pts >= CHEAPEST;
+      const chip = (m, icon, name) => `<span class="btn small ${this.mode===m?"primary":""} ${pts<POWERS[m].cost?"dim":""}" onclick="App.setMode('${m}')">${icon} ${name} ${POWERS[m].cost}★</span>`;
       controls = `
         ${canPower ? `<div class="row" style="margin-top:10px">
           <span class="btn small ${this.mode==="fire"?"primary":""}" onclick="App.setMode('fire')">🎯 Shot</span>
-          <span class="btn small ${this.mode==="sonar"?"primary":""} ${pts<POWERS.sonar.cost?"dim":""}" onclick="App.setMode('sonar')">📡 Sonar ${POWERS.sonar.cost}★</span>
-          <span class="btn small ${this.mode==="strike"?"primary":""} ${pts<POWERS.strike.cost?"dim":""}" onclick="App.setMode('strike')">✈️ Strike ${POWERS.strike.cost}★</span>
+          ${chip("sonar", "📡", "Sonar")}
+          ${chip("torp", "🛥", "Torpedo")}
+          ${chip("strike", "✈️", "Strike")}
+          ${chip("nuke", "☢️", "Nuke")}
         </div>` : ""}
-        ${this.mode === "strike" ? `<div class="row" style="margin-top:8px">
+        ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
           <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
           <span class="btn small ${this.dir==="col"?"primary":""}" onclick="App.setDir('col')">↕︎ Down</span>
         </div>` : ""}
         <div class="row" style="margin-top:10px">
           <span class="btn primary big" style="max-width:280px;${this.sel==null||this.saving?"opacity:0.4;pointer-events:none":""}" onclick="App.doAction()">
-            ${this.saving ? "Saving…" : this.mode==="fire"?"Fire! 💥":this.mode==="sonar"?"Ping! 📡":"Bombs away! ✈️"}
+            ${this.saving ? "Saving…"
+              : this.mode==="fire" ? "Fire! 💥"
+              : this.mode==="sonar" ? "Ping! 📡"
+              : this.mode==="torp" ? "Launch! 🛥"
+              : this.mode==="nuke" ? "Drop it! ☢️" : "Bombs away! ✈️"}
           </span>
         </div>
-        <div class="hint">${this.sel==null?"Tap a square on their waters to aim":"Locked on — tap the button above to shoot"}</div>`;
+        <div class="hint">${
+          this.mode==="torp"
+            ? (this.sel==null ? "Tap any square to pick the lane — the torpedo runs it from the edge"
+                              : "Lane set — the torpedo stops at the first ship it meets")
+            : this.sel==null ? "Tap a square on their waters to aim"
+            : "Locked on — tap the button above to shoot"}</div>`;
     } else if (myTurn && this.tab === "fleet") {
       controls = `<div class="hint" style="margin-top:10px">Flip to <b>Their waters</b> to take your shot →
         <span class="btn small primary" onclick="App.setTab('target')">Aim 🎯</span></div>`;
