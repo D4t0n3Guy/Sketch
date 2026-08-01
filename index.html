@@ -118,6 +118,15 @@
   @keyframes flyA { from { transform: translate(0,0) var(--rot,rotate(0deg)); } to { transform: var(--fly) var(--rot,rotate(0deg)); } }
   .plane { position: absolute; z-index: 5; font-size: 26px; pointer-events: none; animation: flyA 1.4s linear both; }
   .mineMark { font-size: 15px; opacity: 0.55; line-height: 1; }
+  .overCard.win { background: #fffbe6; border-color: #e0b91f; }
+  .overCard.lose { background: #fdf0ee; border-color: #c98b83; }
+  .overBanner { font-size: 34px; font-weight: 700; letter-spacing: 1px; }
+  .crewRow { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 0; border-bottom: 1px dashed #d8e4ee; }
+  .crewRow:last-child { border-bottom: none; }
+  .powDesc { margin: 8px auto 0; max-width: 340px; padding: 8px 12px;
+    border: 2px dashed #c9ddec; border-radius: 10px; background: #f8fbfd;
+    font-size: 17px; line-height: 1.25; }
 
   /* --- ordnance falls, then lands --- */
   @keyframes dropA {
@@ -211,18 +220,30 @@
 /* aim: where you tap — "enemy", "own", or "none" (fires straight away).
    kind: "act" spends your turn, "sup" is a buy-and-keep-shooting support move. */
 const POWERS = {
-  radio:  { cost: 2, icon: "\uD83D\uDCFB", label: "Intercept", aim: "none",  kind: "sup" },
-  mine:   { cost: 3, icon: "\u2693",       label: "Mine",      aim: "own",   kind: "act" },
-  sonar:  { cost: 3, icon: "\uD83D\uDCE1", label: "Sonar",     aim: "enemy", kind: "act" },
-  spot:   { cost: 3, icon: "\uD83D\uDE81", label: "Spotter",   aim: "none",  kind: "sup" },
-  repair: { cost: 4, icon: "\uD83D\uDD27", label: "Repair",    aim: "own",   kind: "act" },
-  depth:  { cost: 5, icon: "\uD83C\uDF0A", label: "Charges",   aim: "enemy", kind: "act" },
-  smoke:  { cost: 5, icon: "\uD83D\uDCA8", label: "Smoke",     aim: "none",  kind: "sup" },
-  strike: { cost: 5, icon: "\u2708\uFE0F", label: "Strike",    aim: "enemy", kind: "act" },
-  torp:   { cost: 5, icon: "\uD83D\uDEE5", label: "Torpedo",   aim: "enemy", kind: "act" },
-  dbl:    { cost: 6, icon: "\u26A1",       label: "Double",    aim: "none",  kind: "sup" },
-  storm:  { cost: 7, icon: "\uD83C\uDF00", label: "Storm",     aim: "none",  kind: "act" },
-  nuke:   { cost: 8, icon: "\u2622\uFE0F", label: "Nuke",      aim: "enemy", kind: "act" },
+  radio:  { cost: 2, icon: "\uD83D\uDCFB", label: "Intercept", aim: "none",  kind: "sup",
+            desc: "Listen in on their radio. Tells you how long their biggest surviving ship is \u2014 no damage, and you still take your shot." },
+  mine:   { cost: 3, icon: "\u2693",       label: "Mine",      aim: "own",   kind: "act",
+            desc: "Hide a mine in your own open water. If they ever shoot that square it detonates and their run ends on the spot, even on a hit." },
+  sonar:  { cost: 3, icon: "\uD83D\uDCE1", label: "Sonar",     aim: "enemy", kind: "act",
+            desc: "Sweep a 3\u00D73 patch and mark which squares hold steel. Reveals, never damages." },
+  spot:   { cost: 3, icon: "\uD83D\uDE81", label: "Spotter",   aim: "none",  kind: "sup",
+            desc: "Puts a spotter overhead. Your next miss reports whether a ship is sitting right beside it. You still shoot this turn." },
+  repair: { cost: 4, icon: "\uD83D\uDD27", label: "Repair",    aim: "own",   kind: "act",
+            desc: "Patch one damaged square on a ship of yours that hasn't gone down. Wrecks can't be raised." },
+  depth:  { cost: 5, icon: "\uD83C\uDF0A", label: "Charges",   aim: "enemy", kind: "act",
+            desc: "Roll three charges into a 5\u00D75 box. Where they land is pure luck \u2014 good for cracking open a fresh area." },
+  smoke:  { cost: 5, icon: "\uD83D\uDCA8", label: "Smoke",     aim: "none",  kind: "sup",
+            desc: "Lay a screen over your fleet. Their next sonar or intercept comes back a lie, and they won't know it." },
+  strike: { cost: 5, icon: "\u2708\uFE0F", label: "Strike",    aim: "enemy", kind: "act",
+            desc: "A bomber runs a 5-square line, across or down. Hits everything under it, but never earns you another go." },
+  torp:   { cost: 5, icon: "\uD83D\uDEE5", label: "Torpedo",   aim: "enemy", kind: "act",
+            desc: "A sub runs a whole row or column from the edge and detonates on the first ship it meets. Empty lane? It clears the lot." },
+  dbl:    { cost: 6, icon: "\u26A1",       label: "Double",    aim: "none",  kind: "sup",
+            desc: "Load a second round. Your next shot earns another turn even if it misses." },
+  storm:  { cost: 7, icon: "\uD83C\uDF00", label: "Storm",     aim: "none",  kind: "act",
+            desc: "Call down weather on the whole map: one random unknown square in every single row takes a hit. No aiming, no mercy." },
+  nuke:   { cost: 8, icon: "\u2622\uFE0F", label: "Nuke",      aim: "enemy", kind: "act",
+            desc: "Flattens a full 3\u00D73 block. Anything that sinks takes its neighbours with it \u2014 the chain can end a game." },
 };
 const CHEAPEST = Math.min(...Object.values(POWERS).map(p => p.cost));
 const aimOf = m => m === "fire" ? "enemy" : (POWERS[m] ? POWERS[m].aim : "enemy");
@@ -243,6 +264,25 @@ async function api(payload) {
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function myGames() { try { return JSON.parse(lsGet("sks:games") || "{}"); } catch (e) { return {}; } }
+
+/* Everyone you've actually played, so a rematch is one tap rather than a hunt
+   through iMessage for an old link. */
+function crew() { try { return JSON.parse(lsGet("sks:crew") || "{}"); } catch (e) { return {}; } }
+function crewNote(name, gameId, result) {
+  if (!name) return;
+  const key = name.trim().toLowerCase();
+  if (!key) return;
+  const c = crew();
+  const e = c[key] || { name: name.trim(), w: 0, l: 0, games: 0 };
+  e.name = name.trim();
+  e.last = gameId || e.last;
+  e.ts = Date.now();
+  if (result === "w") e.w = (e.w || 0) + 1;
+  if (result === "l") e.l = (e.l || 0) + 1;
+  c[key] = e;
+  lsSet("sks:crew", JSON.stringify(c));
+}
+function crewForget(key) { const c = crew(); delete c[key]; lsSet("sks:crew", JSON.stringify(c)); }
 
 /* This device's permanent player identity. Created once, never shared in a link. */
 function myPid() {
@@ -362,6 +402,8 @@ const App = {
   reelTimer: null,
   replaying: false,
   reelPos: 0, reelLen: 0,
+  overSeen: null,
+  vs: "",
   view: "home",
   tab: "target",
   mode: "fire",
@@ -412,6 +454,12 @@ const App = {
     saveMyGame(id, {
       label: `${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
     });
+    const oppName = nameOf(res.st, other(res.you));
+    if (oppName) {
+      const ended = res.st.ph === "o" && !this.overSeen;
+      if (ended) this.overSeen = res.st.mv;
+      crewNote(oppName, id, ended ? (res.st.w === res.you ? "w" : "l") : null);
+    }
     lsSet("sks:seen:" + id, String(res.st.mv));
     // Their turn is over and it's ours again — roll the tape.
     const rl = res.st.rl;
@@ -604,7 +652,8 @@ const App = {
   },
 
   /* ---------- flows ---------- */
-  startSetup() { this.netErr = ""; this.view = "setup"; this.render(); },
+  startSetup(vs) { this.netErr = ""; this.vs = vs || ""; this.view = "setup"; this.render(); },
+  forgetMate(key) { crewForget(key); this.render(); },
 
   async createGame() {
     const name = document.getElementById("nm").value.trim();
@@ -619,7 +668,8 @@ const App = {
       this.id = res.id;
       this.me = "p1"; this.st = st;
       history.replaceState(null, "", "#g=" + res.id);
-      saveMyGame(res.id, { label: `${name} vs …` });
+      saveMyGame(res.id, { label: `${name} vs ${this.vs || "…"}` });
+      if (this.vs) crewNote(this.vs, res.id, null);
       lsSet("sks:seen:" + res.id, "1");
       this.paint = new Set(); this.placeMsg = "";
       this.view = "place";
@@ -758,7 +808,10 @@ const App = {
 
   async doAction() {
     const st = this.st, me = this.me, opp = other(me);
-    if (st.ph !== "b" || st.t !== me || this.sel == null || this.saving) return;
+    if (st.ph !== "b" || st.t !== me || this.saving) return;
+    // Support powers are confirmed through this same button.
+    if (POWERS[this.mode] && POWERS[this.mode].kind === "sup") { await this.useSupport(this.mode); return; }
+    if (aimOf(this.mode) !== "none" && this.sel == null) return;   // storm & co. need no aim
     const s = st.s, mode = this.mode, aim = this.sel;
     let cells = [];
 
@@ -1020,8 +1073,12 @@ const App = {
     nxt.lg = ["🔄 Rematch!"];
     this.st = nxt;
     this.paint = new Set(); this.placeMsg = "";
+    this.anim = null; this.sel = null; this.mode = "fire";
+    this.overSeen = null;          // so the next result gets counted too
+    this.stopReel();
     this.view = "place";
-    await this.commit();
+    this.render();
+    this.commit();
   },
 
   homeBtn() {
@@ -1313,7 +1370,18 @@ const App = {
             <span class="btn small primary" onclick="App.openSaved('${id}')">Open ▶︎</span>
             <span class="btn small" onclick="App.dropSaved('${id}')">✕</span>
           </span></div>`).join("") + `</div>` : "";
+      const mates = Object.entries(crew()).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+      const crewCard = mates.length ? `<div class="card"><h2>Your crew ⚓</h2>
+        <div class="hint" style="margin-top:0">Start a fresh game — you'll still send them the link.</div>
+        ${mates.map(([k, e]) => `<div class="crewRow">
+          <span class="body">${e.name}${(e.w || e.l) ? ` <span style="opacity:0.6">· ${e.w || 0}W ${e.l || 0}L</span>` : ""}</span>
+          <span>
+            ${e.last && myGames()[e.last] ? `<span class="btn small" onclick="App.openSaved('${e.last}')">Last game</span>` : ""}
+            <span class="btn small primary" onclick="App.startSetup('${String(e.name).replace(/'/g, "\\'")}')">Play ⚔︎</span>
+            <span class="btn small" onclick="App.forgetMate('${k.replace(/'/g, "\\'")}')">✕</span>
+          </span></div>`).join("")}</div>` : "";
       el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+        ${crewCard}
         ${list}
         <div class="card"><h2>Ahoy! ⚓</h2>
           <div class="body">A slow-burn battleship for two people who text each other. No timers, no passwords — got an invite? Just tap the link you were texted, on your own phone.</div>
@@ -1328,6 +1396,7 @@ const App = {
       const savedName = (lsGet("sks:name") || "").replace(/"/g, "&quot;");
       el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
         <div class="card"><h2>Start a new voyage</h2>
+          ${this.vs ? `<div class="hint" style="margin-top:0">Challenging <b>${this.vs}</b> — send them the link once you've drawn your fleet.</div>` : ""}
           <div class="label">Your name</div>
           <input type="text" id="nm" value="${savedName}" placeholder="Admiral…">
           <div class="label">Ocean size</div>
@@ -1394,7 +1463,7 @@ const App = {
       const bf = bfOf(st, me);
       const chip = m => {
         const P = POWERS[m];
-        return `<span class="btn small ${this.mode===m?"primary":""} ${pts<P.cost?"dim":""}" onclick="App.${P.kind==="sup"?`useSupport('${m}')`:`setMode('${m}')`}">${P.icon} ${P.label} ${P.cost}★</span>`;
+        return `<span class="btn small ${this.mode===m?"primary":""} ${pts<P.cost?"dim":""}" onclick="App.setMode('${m}')">${P.icon} ${P.label} ${P.cost}★</span>`;
       };
       const acts = Object.keys(POWERS).filter(m => POWERS[m].kind === "act");
       const sups = Object.keys(POWERS).filter(m => POWERS[m].kind === "sup");
@@ -1409,10 +1478,17 @@ const App = {
         : this.mode==="depth" ? "Roll them! 🌊"
         : this.mode==="storm" ? "Summon it! 🌀"
         : this.mode==="repair" ? "Patch it! 🔧"
-        : this.mode==="mine" ? "Lay it! ⚓" : "Bombs away! ✈️")
+        : this.mode==="mine" ? "Lay it! ⚓"
+        : this.mode==="radio" ? "Listen in! 📻"
+        : this.mode==="spot" ? "Send it up! 🚁"
+        : this.mode==="smoke" ? "Lay smoke! 💨"
+        : this.mode==="dbl" ? "Load it! ⚡" : "Bombs away! ✈️")
         // the shot is already on screen; a quiet dot beats blanking the button
         + (this.saving ? `<span class="syncDot"></span>` : "");
-      const hint = aim === "none" ? "No aiming needed — hit the button"
+      const hint = aim === "none"
+        ? (POWERS[this.mode] && POWERS[this.mode].kind === "sup"
+            ? "You'll still take your shot after this"
+            : "No aiming needed — hit the button")
         : aim === "own" ? (this.mode==="repair"
             ? "Tap a damaged square of your own fleet to patch"
             : "Tap open water in your own grid to hide the mine")
@@ -1425,6 +1501,7 @@ const App = {
           <span class="btn primary big" style="max-width:280px;${!ready?"opacity:0.4;pointer-events:none":this.saving?"pointer-events:none":""}" onclick="App.doAction()">${label}</span>
         </div>
         <div class="hint">${hint}</div>
+        ${POWERS[this.mode] ? `<div class="powDesc"><b>${POWERS[this.mode].icon} ${POWERS[this.mode].label} \u2014 ${POWERS[this.mode].cost}\u2605</b><br>${POWERS[this.mode].desc}</div>` : ""}
         ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
           <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
           <span class="btn small ${this.dir==="col"?"primary":""}" onclick="App.setDir('col')">↕︎ Down</span>
@@ -1442,12 +1519,22 @@ const App = {
 
     let overCard = "";
     if (st.ph === "o") {
-      overCard = `<div class="card" style="text-align:center;margin-top:10px">
-        <h2>${nameOf(st, st.w)} rules the seas!</h2>
-        <div class="row" style="margin-top:8px">
-          <span class="btn primary" onclick="App.rematch()">Rematch 🔄</span>
+      const iWon = st.w === me;
+      const mySunk = shipsOf(st, opp).filter(sh => shipSunk(sh, saOf(st, opp))).length;
+      const theirSunk = shipsOf(st, me).filter(sh => shipSunk(sh, saOf(st, me))).length;
+      overCard = `<div class="card overCard ${iWon ? "win" : "lose"}" style="text-align:center;margin-top:10px">
+        <div class="overBanner">${iWon ? "🏆 VICTORY" : "💀 DEFEATED"}</div>
+        <h2 style="margin:2px 0 0">${iWon
+          ? `You sank ${nameOf(st, opp) || "them"}'s fleet!`
+          : `${nameOf(st, opp) || "They"} sank your fleet.`}</h2>
+        <div class="body" style="margin-top:6px">Ships sunk — you ${mySunk} · them ${theirSunk}</div>
+        <div class="row" style="margin-top:12px">
+          <span class="btn primary big" style="max-width:260px" onclick="App.rematch()">Rematch 🔄</span>
         </div>
-      </div>` + (st.la && st.la.by === me ? this.nudgeHtml(`Tell ${nameOf(st, opp)} how it ended:`) : "");
+        <div class="hint">Same link, same two of you — you'll both draw a fresh fleet.</div>
+      </div>` + this.nudgeHtml(iWon
+        ? `Rub it in with ${nameOf(st, opp) || "them"}:`
+        : `Demand satisfaction from ${nameOf(st, opp) || "them"}:`);
     }
 
     const logs = st.lg.slice(-4).reverse()
