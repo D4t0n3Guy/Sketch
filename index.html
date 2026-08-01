@@ -118,6 +118,55 @@
   @keyframes flyA { from { transform: translate(0,0) var(--rot,rotate(0deg)); } to { transform: var(--fly) var(--rot,rotate(0deg)); } }
   .plane { position: absolute; z-index: 5; font-size: 26px; pointer-events: none; animation: flyA 1.4s linear both; }
   .mineMark { font-size: 15px; opacity: 0.55; line-height: 1; }
+
+  /* --- ordnance falls, then lands --- */
+  @keyframes dropA {
+    0%   { transform: translate(-50%, -46px) rotate(-14deg) scale(0.75); opacity: 0; }
+    12%  { opacity: 1; }
+    85%  { transform: translate(-50%, calc(var(--dropTo) - 4px)) rotate(10deg) scale(1.05); opacity: 1; }
+    100% { transform: translate(-50%, var(--dropTo)) rotate(10deg) scale(0.6); opacity: 0; }
+  }
+  .drop { position: absolute; top: 0; z-index: 7; font-size: 22px; line-height: 1;
+    pointer-events: none; animation: dropA 560ms cubic-bezier(0.55,0.06,0.68,0.19) both; }
+
+  @keyframes boomA {
+    0%   { transform: translate(-50%,-50%) scale(0.15); opacity: 1; }
+    45%  { opacity: 1; }
+    100% { transform: translate(-50%,-50%) scale(2.4); opacity: 0; }
+  }
+  .boom { position: absolute; width: 46px; height: 46px; border-radius: 50%;
+    z-index: 6; pointer-events: none;
+    background: radial-gradient(circle, #fff6c2 0%, #ffc24e 35%, #e8613a 65%, rgba(232,97,58,0) 72%);
+    animation: boomA 640ms ease-out both; }
+
+  @keyframes shardA {
+    0%   { transform: translate(-50%,-50%) scale(0.2) rotate(0deg); opacity: 0.95; }
+    100% { transform: translate(-50%,-50%) scale(2.9) rotate(38deg); opacity: 0; }
+  }
+  .shard { position: absolute; width: 40px; height: 40px; z-index: 6; pointer-events: none;
+    background:
+      conic-gradient(from 0deg, rgba(59,62,69,0.85) 0 6deg, transparent 6deg 90deg,
+        rgba(59,62,69,0.85) 90deg 96deg, transparent 96deg 180deg,
+        rgba(59,62,69,0.85) 180deg 186deg, transparent 186deg 270deg,
+        rgba(59,62,69,0.85) 270deg 276deg, transparent 276deg 360deg);
+    animation: shardA 700ms ease-out both; }
+
+  @keyframes splashA {
+    0%   { transform: translate(-50%,-50%) scale(0.15); opacity: 0.95; border-width: 5px; }
+    100% { transform: translate(-50%,-50%) scale(2.1); opacity: 0; border-width: 1px; }
+  }
+  .splash { position: absolute; width: 40px; height: 40px; border-radius: 50%;
+    z-index: 6; pointer-events: none; border: 4px solid rgba(62,111,176,0.8);
+    animation: splashA 720ms ease-out both; }
+
+  @keyframes shakeA {
+    0%,100% { transform: translate(0,0); }
+    18% { transform: translate(-4px,2px); }  38% { transform: translate(4px,-3px); }
+    58% { transform: translate(-3px,-2px); } 78% { transform: translate(3px,2px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .drop, .boom, .shard, .splash, .nuke, .plane { animation-duration: 1ms !important; }
+  }
   @keyframes syncPulse { 0%,100% { opacity: 0.25; } 50% { opacity: 0.9; } }
   .syncDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     background: #3e6fb0; margin-left: 6px; vertical-align: middle;
@@ -381,6 +430,37 @@ const App = {
   viewFor(st) { return st.ph === "p" ? "place" : "battle"; },
 
   /* ---------- turn replay ---------- */
+  cellDelay(anim, k, isBlast) {
+    if (isBlast) return 650 + k * 55;
+    switch (anim.ty) {
+      case "strike": return 900 + k * 240;
+      case "torp":   return 280 + k * 100;
+      case "nuke":   return 780 + k * 60;
+      case "storm":  return 380 + k * 130;
+      case "depth":  return 380 + k * 320;
+      case "sonar":  return 600 + k * 60;
+      default:       return 560;      // a plain shot lands when the bomb does
+    }
+  },
+  cellXY(i, s, px) { const [r, c] = rcOf(i, s); return [c * px + px / 2, r * px + px / 2]; },
+
+  /* Something falls, then it either blows up or splashes. */
+  fxHtml(anim, s, px) {
+    if (!anim || !anim.c || !anim.c.length || anim.ty === "sonar") return "";
+    let out = "";
+    anim.c.forEach(([i, r, b], k) => {
+      const d = this.cellDelay(anim, k, b === "b");
+      const [x, y] = this.cellXY(i, s, px);
+      if (anim.ty === "fire" || anim.ty === "depth" || anim.ty === "storm") {
+        const icon = anim.ty === "storm" ? "\u26A1" : anim.ty === "depth" ? "\uD83D\uDEE2" : "\uD83D\uDCA3";
+        out += `<div class="drop" style="left:${x}px; --dropTo:${y}px; animation-delay:${Math.max(0, d - 520)}ms">${icon}</div>`;
+      }
+      out += `<div class="${r === "h" ? "boom" : "splash"}" style="left:${x}px; top:${y}px; animation-delay:${d}ms"></div>`;
+      if (r === "h") out += `<div class="shard" style="left:${x}px; top:${y}px; animation-delay:${d}ms"></div>`;
+    });
+    return out;
+  },
+
   actMs(a) {
     const n = (a.c || []).length;
     const blast = (a.c || []).some(x => x[2] === "b");
@@ -1034,7 +1114,7 @@ const App = {
       let cls = "cell", mark = "";
       if (variant === "place") {
         if (this.paint.has(i)) cls += " painted";
-        cells += `<div class="${cls}" onclick="App.tapPaint(${i})"></div>`;
+        cells += `<div class="${cls}" data-tap="paint" data-i="${i}"></div>`;
         continue;
       }
       if (variant === "fleet") {
@@ -1042,13 +1122,7 @@ const App = {
         const ownAim = st.ph === "b" && st.t === me && aimOf(this.mode) === "own" && !this.replaying;
         if (freshMap[i]) {
           const f = freshMap[i];
-          const delay = f.b ? 650 + f.k * 55
-          : anim.ty === "strike" ? 900 + f.k * 240
-          : anim.ty === "torp" ? 280 + f.k * 100
-          : anim.ty === "nuke" ? 780 + f.k * 60
-          : anim.ty === "storm" ? 380 + f.k * 130
-          : anim.ty === "depth" ? 380 + f.k * 320
-          : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
+          const delay = this.cellDelay(anim, f.k, f.b === "b");
           mark = this.markSvg(f.r, true, delay);
         } else if (animOnThis && anim.mask && anim.mask.has(i)) mark = "";
         else if (ch === "h") mark = this.markSvg("h");
@@ -1056,7 +1130,7 @@ const App = {
         if (!mark && mnOf(st, me).includes(i)) mark = `<span class="mineMark">\u2693</span>`;
         if (ownAim) {
           if (this.sel === i) cls += " sel";
-          cells += `<div class="${cls}" onclick="App.tapOwn(${i})">${mark}</div>`;
+          cells += `<div class="${cls}" data-tap="own" data-i="${i}">${mark}</div>`;
           continue;
         }
         cells += `<div class="${cls}">${mark}</div>`;
@@ -1066,13 +1140,7 @@ const App = {
       const intel = chAt(intelOf(st, me), i);
       if (freshMap[i]) {
         const f = freshMap[i];
-        const delay = f.b ? 650 + f.k * 55
-          : anim.ty === "strike" ? 900 + f.k * 240
-          : anim.ty === "torp" ? 280 + f.k * 100
-          : anim.ty === "nuke" ? 780 + f.k * 60
-          : anim.ty === "storm" ? 380 + f.k * 130
-          : anim.ty === "depth" ? 380 + f.k * 320
-          : anim.ty === "sonar" ? 600 + f.k * 60 : 100;
+        const delay = this.cellDelay(anim, f.k, f.b === "b");
         mark = this.markSvg(f.r, true, delay);
       } else if (ch === "h") mark = this.markSvg("h");
       else if (ch === "m") mark = this.markSvg("m");
@@ -1088,7 +1156,7 @@ const App = {
              (this.dir === "col" && c === sc && Math.abs(r-sr) <= 2))) cls += " preview";
         if (this.sel === i) cls += " sel";
       }
-      cells += `<div class="${cls}" onclick="App.tapTarget(${i})">${mark}</div>`;
+      cells += `<div class="${cls}" data-tap="target" data-i="${i}">${mark}</div>`;
     }
 
     let overlays = "";
@@ -1141,11 +1209,20 @@ const App = {
       extras += `<div class="floater" style="left:${boardPx/2-20}px; top:${boardPx/2-10}px;">+${anim.gained}★</div>`;
     }
 
+    let fx = "", shake = "";
+    if (animOnThis) {
+      fx = this.fxHtml(anim, s, px);
+      const hk = (anim.c || []).findIndex(x => x[1] === "h");
+      if (hk >= 0) {
+        const sd = this.cellDelay(anim, hk, anim.c[hk][2] === "b");
+        shake = `animation: shakeA 420ms ease-in-out ${sd}ms both;`;
+      }
+    }
     return `<div class="boardWrap"><div class="board" style="
       width:${boardPx}px; height:${boardPx}px;
       grid-template-columns:repeat(${s}, ${px}px);
       background-image:linear-gradient(#c9ddec 1px, transparent 1px), linear-gradient(90deg, #c9ddec 1px, transparent 1px);
-      background-size:${px}px ${px}px;">${cells}${overlays}${extras}</div></div>`;
+      background-size:${px}px ${px}px;${shake}">${cells}${overlays}${extras}${fx}</div></div>`;
   },
 
   headerHtml() {
@@ -1398,6 +1475,19 @@ const App = {
 
 window.App = App;
 App.boot();
+/* One listener on a node that never gets replaced. pointerdown fires the moment
+   a finger lands, so a re-render mid-tap can't swallow it. */
+const appEl = document.getElementById("app");
+if (appEl) appEl.addEventListener("pointerdown", ev => {
+  const el = ev.target.closest && ev.target.closest("[data-tap]");
+  if (!el) return;
+  const i = parseInt(el.dataset.i, 10);
+  if (Number.isNaN(i)) return;
+  const kind = el.dataset.tap;
+  if (kind === "paint") App.tapPaint(i);
+  else if (kind === "own") App.tapOwn(i);
+  else if (kind === "target") App.tapTarget(i);
+}, { passive: true });
 window.addEventListener("hashchange", () => App.boot());
 document.addEventListener("visibilitychange", () => { if (!document.hidden) App.pollNow(); });
 window.addEventListener("focus", () => App.pollNow());
