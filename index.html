@@ -47,6 +47,8 @@
     text-decoration: none; text-align: center;
   }
   .btn:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 rgba(59,62,69,0.25); }
+  .btn, .cell { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  .cell:active { background: rgba(255,224,102,0.75); }
   .btn.primary { background: #ffe066; }
   .btn.danger { background: #f3b6b1; }
   .btn.big { display: block; width: 100%; font-size: 23px; padding: 13px; }
@@ -116,6 +118,10 @@
   @keyframes flyA { from { transform: translate(0,0) var(--rot,rotate(0deg)); } to { transform: var(--fly) var(--rot,rotate(0deg)); } }
   .plane { position: absolute; z-index: 5; font-size: 26px; pointer-events: none; animation: flyA 1.4s linear both; }
   .mineMark { font-size: 15px; opacity: 0.55; line-height: 1; }
+  @keyframes syncPulse { 0%,100% { opacity: 0.25; } 50% { opacity: 0.9; } }
+  .syncDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #3e6fb0; margin-left: 6px; vertical-align: middle;
+    animation: syncPulse 1s ease-in-out infinite; }
   @keyframes nukeA { 0% { transform: translate(-50%,-50%) scale(0.15); opacity: 0; }
     25% { opacity: 1; } 100% { transform: translate(-50%,-50%) scale(2.8); opacity: 0; } }
   .nuke { position: absolute; z-index: 6; font-size: 38px; pointer-events: none;
@@ -439,9 +445,32 @@ const App = {
   },
 
   /* ---------- polling ---------- */
+  /* How eagerly to check depends on whether anything could actually change:
+     fast while it's their move and the app is on screen, idle otherwise. */
+  pollDelay() {
+    if (document.hidden) return 20000;
+    const st = this.st;
+    if (!st || st.ph === "o") return 10000;
+    if (st.ph === "p") return 2500;
+    return st.t === this.me ? 6000 : 1500;
+  },
+  pollStop() {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+  },
   pollStart() {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = setInterval(() => this.pollTick(), 4000);
+    this.pollStop();
+    const tick = async () => {
+      await this.pollTick();
+      if (this.id) this.pollTimer = setTimeout(tick, this.pollDelay());
+    };
+    this.pollTimer = setTimeout(tick, this.pollDelay());
+  },
+  /* Coming back to the app shouldn't mean waiting out a timer. */
+  pollNow() {
+    if (!this.id) return;
+    this.pollTick();
+    this.pollStart();
   },
   async pollTick() {
     const st = this.st;
@@ -643,7 +672,8 @@ const App = {
     setPts(st, me, ptsOf(st, me) - POWERS[m].cost);
     st.lg = [...st.lg.slice(-4), line];
     this.netErr = "";
-    await this.commit();       // turn stays with you — take your shot
+    this.render();
+    this.commit();             // turn stays with you — take your shot
   },
 
   async doAction() {
@@ -697,7 +727,7 @@ const App = {
       blankReel(st, me);
       st.lg = [...st.lg.slice(-4), `\uD83D\uDD27 ${nameOf(st, me)}'s crew patched a hull breach`];
       this.sel = null; this.mode = "fire"; this.netErr = "";
-      await this.commit();
+      this.render(); this.commit();
       return;
     } else if (mode === "mine") {
       if (ptsOf(st, me) < POWERS.mine.cost) return;
@@ -712,7 +742,7 @@ const App = {
       blankReel(st, me);
       st.lg = [...st.lg.slice(-4), `\u2693 ${nameOf(st, me)} slipped a mine into the shallows`];
       this.sel = null; this.mode = "fire"; this.netErr = "";
-      await this.commit();
+      this.render(); this.commit();
       return;
     } else if (mode === "depth") {
       if (ptsOf(st, me) < POWERS.depth.cost) return;
@@ -894,10 +924,12 @@ const App = {
     }
 
     this.anim = { ty: mode, d: this.dir, c: results, gained };
-    this.sel = null; this.mode = "fire";
-    await this.commit();
+    this.sel = null; this.mode = "fire"; this.netErr = "";
+    // Draw it now. Waiting on the round-trip first is what made this feel laggy.
+    this.render();
     setTimeout(() => { this.anim = null; this.render(); },
       blast.length ? 900 + results.length * 55 + 1400 : this.actMs(st.la));
+    this.commit();
   },
 
   async rematch() {
@@ -1293,15 +1325,16 @@ const App = {
         .filter(Boolean).join(" · ");
       const aim = aimOf(this.mode);
       const ready = aim === "none" || this.sel != null;
-      const label = this.saving ? "Saving…"
-        : this.mode==="fire" ? "Fire! 💥"
+      const label = (this.mode==="fire" ? "Fire! 💥"
         : this.mode==="sonar" ? "Ping! 📡"
         : this.mode==="torp" ? "Launch! 🛥"
         : this.mode==="nuke" ? "Drop it! ☢️"
         : this.mode==="depth" ? "Roll them! 🌊"
         : this.mode==="storm" ? "Summon it! 🌀"
         : this.mode==="repair" ? "Patch it! 🔧"
-        : this.mode==="mine" ? "Lay it! ⚓" : "Bombs away! ✈️";
+        : this.mode==="mine" ? "Lay it! ⚓" : "Bombs away! ✈️")
+        // the shot is already on screen; a quiet dot beats blanking the button
+        + (this.saving ? `<span class="syncDot"></span>` : "");
       const hint = aim === "none" ? "No aiming needed — hit the button"
         : aim === "own" ? (this.mode==="repair"
             ? "Tap a damaged square of your own fleet to patch"
@@ -1312,7 +1345,7 @@ const App = {
         : "Locked on — tap the button above to shoot";
       controls = `
         <div class="row" style="margin-top:10px">
-          <span class="btn primary big" style="max-width:280px;${!ready||this.saving?"opacity:0.4;pointer-events:none":""}" onclick="App.doAction()">${label}</span>
+          <span class="btn primary big" style="max-width:280px;${!ready?"opacity:0.4;pointer-events:none":this.saving?"pointer-events:none":""}" onclick="App.doAction()">${label}</span>
         </div>
         <div class="hint">${hint}</div>
         ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
@@ -1366,6 +1399,9 @@ const App = {
 window.App = App;
 App.boot();
 window.addEventListener("hashchange", () => App.boot());
+document.addEventListener("visibilitychange", () => { if (!document.hidden) App.pollNow(); });
+window.addEventListener("focus", () => App.pollNow());
+window.addEventListener("pageshow", () => App.pollNow());
 let lastW = window.innerWidth;
 window.addEventListener("resize", () => {
   const ae = document.activeElement;
