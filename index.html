@@ -1170,7 +1170,7 @@ const App = {
   /* If a render ever throws, the screen would otherwise freeze mid-paint with
      dead buttons and no way back. Catch it, say so, and offer an escape. */
   render() {
-    try { this.paint(); }
+    try { this.drawView(); }
     catch (err) {
       console.error("render failed:", err);
       const el = document.getElementById("app");
@@ -1186,7 +1186,7 @@ const App = {
     }
   },
 
-  paint() {
+  drawView() {
     const el = document.getElementById("app");
     const st = this.st;
 
