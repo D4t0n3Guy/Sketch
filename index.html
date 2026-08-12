@@ -743,15 +743,32 @@ const App = {
     this.st.mv = prevMv + 1;
     this.epoch++;
     this.saving = true;
-    try {
-      await api({ action: "save", id: this.id, prevMv, st: this.st });
-      lsSet("sks:seen:" + this.id, String(this.st.mv));
-    } catch (e) {
+    /* A shot the player has already watched land must not be quietly undone —
+       rolling it back also hands them knowledge of a square they'd have to fire
+       at again. So a flaky connection gets retried, not reverted. */
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await api({ action: "save", id: this.id, prevMv, st: this.st });
+        if (res && res.st) this.st = res.st;      // server owns the move counter
+        lsSet("sks:seen:" + this.id, String(this.st.mv));
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (e.status === 409) break;              // a real conflict; retrying won't help
+        await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
+    if (lastErr) {
+      const e = lastErr;
       if (e.status === 409 && e.data && e.data.st) {
         // out of sync — take server truth
         this.st = e.data.st;
         this.resync = false;
-        this.netErr = "They got a move in first — board refreshed, take your shot.";
+        this.netErr = e.data.reason === "not-your-turn"
+          ? "That shot didn't count — it was already their turn."
+          : "They got a move in first — board refreshed, take your shot.";
         this.view = this.viewFor(this.st);
         lsSet("sks:seen:" + this.id, String(this.st.mv));
       } else {
@@ -951,6 +968,11 @@ const App = {
     if (st.ph !== "b" || st.t !== this.me || this.saving) return;
     if (aimOf(this.mode) !== "enemy") return;
     if (this.mode === "fire" && chAt(saOf(st, other(this.me)), i) !== ".") return;
+    /* A plain shot fires on the tap. The aim-then-confirm two-step was pure
+       friction for the move you make most, and every extra beat between
+       choosing a square and seeing the result is a beat the board can change
+       underneath you. Powers still confirm — they cost stars and can misfire. */
+    if (this.mode === "fire") { this.sel = i; this.doAction(); return; }
     this.sel = (this.sel === i) ? null : i;
     this.render();
   },
@@ -1751,7 +1773,8 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
         : this.mode==="dbl" ? "Load it! ⚡" : "Bombs away! ✈️")
         // the shot is already on screen; a quiet dot beats blanking the button
         + (this.saving ? `<span class="syncDot"></span>` : "");
-      const hint = aim === "none"
+      const hint = this.mode === "fire" ? "Tap a square on their waters to fire"
+        : aim === "none"
         ? (POWERS[this.mode] && POWERS[this.mode].kind === "sup"
             ? "You'll still take your shot after this"
             : "No aiming needed — hit the button")
@@ -1763,9 +1786,9 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
         : this.sel==null ? "Tap a square on their waters to aim"
         : "Locked on — tap the button above to shoot";
       controls = `
-        <div class="row" style="margin-top:10px">
+        ${this.mode === "fire" ? "" : `<div class="row" style="margin-top:10px">
           <span class="btn primary big" style="max-width:280px;${!ready?"opacity:0.4;pointer-events:none":this.saving?"pointer-events:none":""}" onclick="App.doAction()">${label}</span>
-        </div>
+        </div>`}
         <div class="hint">${hint}</div>
         ${!isClassic(st) && POWERS[this.mode] ? `<div class="powDesc"><b>${POWERS[this.mode].icon} ${POWERS[this.mode].label} \u2014 ${POWERS[this.mode].cost}\u2605</b><br>${POWERS[this.mode].desc}</div>` : ""}
         ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
