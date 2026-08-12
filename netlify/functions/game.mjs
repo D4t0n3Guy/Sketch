@@ -27,7 +27,12 @@ function seat(rec, pid, allowClaim) {
   }
   return {
     err: json(
-      { error: "full", message: "Both seats in this game are taken." },
+      {
+        error: "full",
+        message: "Both seats in this game are taken.",
+        // Send back who holds them, so a locked-out player can move their seat.
+        seats: { p1: (rec.st && rec.st.n1) || "", p2: (rec.st && rec.st.n2) || "" },
+      },
       403
     ),
   };
@@ -65,6 +70,27 @@ export default async (req) => {
         },
         410
       );
+    }
+
+    /* Moving an existing seat to this device. Identity lives in one browser's
+       storage, so a cleared cache, a new phone, or the link opening in a
+       different browser would otherwise lock a player out of their own game
+       for good. The other player is told in the log — this is deliberate,
+       since it's the only thing stopping it being used to peek. */
+    if (action === "get" && (body.claim === "p1" || body.claim === "p2") && pid) {
+      const slot = body.claim;
+      if (rec[slot] !== pid) {
+        rec[slot] = pid;
+        const other = slot === "p1" ? "p2" : "p1";
+        if (rec[other] === pid) rec[other] = null;   // never hold both seats
+        const who = (rec.st && (slot === "p1" ? rec.st.n1 : rec.st.n2)) || "A player";
+        if (rec.st) {
+          const line = `\u26A0\uFE0F ${who} moved their seat to another device`;
+          rec.st.lg = [...(rec.st.lg || []).slice(-4), line];
+        }
+        await store.setJSON(body.id, rec);
+      }
+      return json({ st: rec.st, you: slot });
     }
 
     // Only 'get' may claim the open seat — that's how joining works now.
