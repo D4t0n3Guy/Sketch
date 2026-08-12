@@ -46,7 +46,7 @@ export default async (req) => {
   } catch (e) {
     return json({ error: "bad json" }, 400);
   }
-  const store = getStore("sketchship");
+  const store = getStore({ name: "sketchship", consistency: "strong" });
   const { action, pid } = body;
 
   if (action === "create") {
@@ -103,8 +103,10 @@ export default async (req) => {
     }
 
     if (!body.st) return json({ error: "missing state" }, 400);
-    if (body.prevMv !== rec.st.mv) {
-      // someone else saved first — hand back the truth
+    const incoming = Number(body.st.mv) || 0;
+    const held = Number(rec.st && rec.st.mv) || 0;
+    if (incoming <= held) {
+      // Genuinely behind: the other player really did move first.
       return json({ error: "stale", st: rec.st }, 409);
     }
     rec.st = body.st;
