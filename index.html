@@ -968,11 +968,6 @@ const App = {
     if (st.ph !== "b" || st.t !== this.me || this.saving) return;
     if (aimOf(this.mode) !== "enemy") return;
     if (this.mode === "fire" && chAt(saOf(st, other(this.me)), i) !== ".") return;
-    /* A plain shot fires on the tap. The aim-then-confirm two-step was pure
-       friction for the move you make most, and every extra beat between
-       choosing a square and seeing the result is a beat the board can change
-       underneath you. Powers still confirm — they cost stars and can misfire. */
-    if (this.mode === "fire") { this.sel = i; this.doAction(); return; }
     this.sel = (this.sel === i) ? null : i;
     this.render();
   },
