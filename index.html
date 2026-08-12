@@ -117,6 +117,7 @@
   }
   @keyframes flyA { from { transform: translate(0,0) var(--rot,rotate(0deg)); } to { transform: var(--fly) var(--rot,rotate(0deg)); } }
   .plane { position: absolute; z-index: 5; font-size: 26px; pointer-events: none; animation: flyA 1.4s linear both; }
+  .cell.picked { background: #ffe066 !important; box-shadow: inset 0 0 0 3px #c23b32; }
   .mineMark { font-size: 15px; opacity: 0.55; line-height: 1; }
   .overCard.win { background: #fffbe6; border-color: #e0b91f; }
   .overCard.lose { background: #fdf0ee; border-color: #c98b83; }
@@ -339,6 +340,78 @@ function classicCheck(cellSet, s) {
   return { ok: true, ships: t.ships };
 }
 
+/* ---------- fleet arranging ----------
+   A ship here is {r, c, len, dir}. Ships may never touch orthogonally: the game
+   reads a finished layout back as connected blobs, so two that touch end-to-end
+   would merge into one longer ship. Diagonal contact is fine. */
+function shipCellsOf(sh, s) {
+  const out = [];
+  for (let k = 0; k < sh.len; k++)
+    out.push(sh.dir === "row" ? idxOf(sh.r, sh.c + k, s) : idxOf(sh.r + k, sh.c, s));
+  return out;
+}
+function fleetCells(fleet, s) { return new Set(fleet.flatMap(sh => shipCellsOf(sh, s))); }
+function inBounds(sh, s) {
+  if (sh.r < 0 || sh.c < 0 || sh.r >= s || sh.c >= s) return false;
+  return sh.dir === "row" ? sh.c + sh.len <= s : sh.r + sh.len <= s;
+}
+function blockedCells(fleet, skip, s) {
+  const bad = new Set();
+  fleet.forEach((o, j) => {
+    if (j === skip) return;
+    for (const i of shipCellsOf(o, s)) {
+      bad.add(i);
+      const [r, c] = rcOf(i, s);
+      for (const [nr, nc] of [[r-1,c],[r+1,c],[r,c-1],[r,c+1]])
+        if (nr >= 0 && nc >= 0 && nr < s && nc < s) bad.add(idxOf(nr, nc, s));
+    }
+  });
+  return bad;
+}
+function canPlace(fleet, k, cand, s) {
+  if (!inBounds(cand, s)) return false;
+  const bad = blockedCells(fleet, k, s);
+  return shipCellsOf(cand, s).every(i => !bad.has(i));
+}
+function randomFleet(s, roster) {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const fleet = [];
+    let ok = true;
+    for (const len of [...roster].sort((a, b) => b - a)) {
+      let placed = false;
+      for (let t = 0; t < 300 && !placed; t++) {
+        const cand = { len,
+          dir: Math.random() < 0.5 ? "row" : "col",
+          r: Math.floor(Math.random() * s),
+          c: Math.floor(Math.random() * s) };
+        if (canPlace(fleet, -1, cand, s)) { fleet.push(cand); placed = true; }
+      }
+      if (!placed) { ok = false; break; }
+    }
+    if (ok) return fleet;
+  }
+  return null;
+}
+/* Freeform has no fixed roster, so invent one that spends the budget exactly. */
+function rosterFromBudget(b) {
+  const out = [];
+  let left = b;
+  while (left > 0) {
+    const len = Math.min(4, left, 1 + Math.floor(Math.random() * 4));
+    out.push(len); left -= len;
+  }
+  return out;
+}
+function rosterFor(st) {
+  if (isClassic(st)) {
+    const r = [];
+    for (const [len, n] of Object.entries(CLASSIC.fleet))
+      for (let k = 0; k < n; k++) r.push(+len);
+    return r;
+  }
+  return rosterFromBudget(st.b);
+}
+
 function analyzeShips(cellSet, s) {
   const seen = new Set(), ships = [];
   for (const start of cellSet) {
@@ -441,6 +514,9 @@ const App = {
   dir: "row",
   sel: null,
   paint: new Set(),
+  fleet: null,      // arranged ships, or null while free-drawing
+  pick: -1,         // index of the ship currently picked up
+  noAutoFleet: false,
   placeMsg: "",
   anim: null,
   copied: false,
@@ -499,7 +575,7 @@ const App = {
     if (replay) this.tab = "fleet";
     this.view = this.viewFor(res.st);
     if (firstLoad && this.view === "place" && shipsOf(res.st, this.me).length === 0) {
-      this.paint = new Set(); this.placeMsg = "";
+      this.paint = new Set(); this.fleet = null; this.pick = -1; this.noAutoFleet = false; this.placeMsg = "";
     }
     this.render();
     if (replay) this.playReel(rl);
@@ -705,7 +781,7 @@ const App = {
       saveMyGame(res.id, { label: `${name} vs ${this.vs || "…"}` });
       if (this.vs) crewNote(this.vs, res.id, null);
       lsSet("sks:seen:" + res.id, "1");
-      this.paint = new Set(); this.placeMsg = "";
+      this.paint = new Set(); this.fleet = null; this.pick = -1; this.noAutoFleet = false; this.placeMsg = "";
       this.view = "place";
       this.render();
       this.pollStart();
@@ -727,6 +803,7 @@ const App = {
   },
 
   tapPaint(i) {
+    if (this.fleet) { this.tapArrange(i); return; }
     if (this.paint.has(i)) this.paint.delete(i);
     else {
       if (this.paint.size >= this.st.b) {
@@ -738,7 +815,65 @@ const App = {
     this.placeMsg = "";
     this.render();
   },
-  clearPaint() { this.paint = new Set(); this.placeMsg = ""; this.render(); },
+  clearPaint() {
+    this.paint = new Set(); this.fleet = null; this.pick = -1;
+    this.noAutoFleet = true;      // an empty board is now a deliberate choice
+    this.placeMsg = ""; this.render();
+  },
+
+  syncFleet() { this.paint = this.fleet ? fleetCells(this.fleet, this.st.s) : this.paint; },
+
+  shuffleFleet() {
+    const st = this.st;
+    const f = randomFleet(st.s, rosterFor(st));
+    if (!f) { this.placeMsg = "Couldn't fit a fleet on this board — try drawing by hand."; this.render(); return; }
+    this.fleet = f; this.pick = -1;
+    this.syncFleet();
+    this.placeMsg = "";
+    this.render();
+  },
+
+  handDraw() {
+    // Keep whatever is on the board, but go back to tapping squares freely.
+    this.fleet = null; this.pick = -1; this.placeMsg = "";
+    this.render();
+  },
+
+  rotatePick() {
+    if (!this.fleet || this.pick < 0) return;
+    const st = this.st, sh = this.fleet[this.pick];
+    const cand = { ...sh, dir: sh.dir === "row" ? "col" : "row" };
+    if (!canPlace(this.fleet, this.pick, cand, st.s)) {
+      this.placeMsg = "No room to turn it there."; this.render(); return;
+    }
+    this.fleet[this.pick] = cand;
+    this.syncFleet(); this.placeMsg = ""; this.render();
+  },
+
+  /* Tap a ship to pick it up, tap a square to set it down. */
+  tapArrange(i) {
+    const st = this.st, s = st.s;
+    const owner = this.fleet.findIndex(sh => shipCellsOf(sh, s).includes(i));
+
+    if (this.pick < 0) {
+      if (owner >= 0) { this.pick = owner; this.placeMsg = ""; }
+      else this.placeMsg = "Tap one of your ships to pick it up.";
+      this.render(); return;
+    }
+    if (owner === this.pick) { this.pick = -1; this.placeMsg = ""; this.render(); return; }
+
+    const sh = this.fleet[this.pick];
+    const [r, c] = rcOf(i, s);
+    const cand = { ...sh, r, c };
+    if (canPlace(this.fleet, this.pick, cand, s)) {
+      this.fleet[this.pick] = cand;
+      this.pick = -1; this.placeMsg = "";
+      this.syncFleet();
+    } else {
+      this.placeMsg = "Won't fit there — ships can't overlap or touch edge to edge.";
+    }
+    this.render();
+  },
 
   /* Classic gives you a roster to fill, so show what's left as you draw. */
   fleetChecklistHtml() {
@@ -1129,7 +1264,7 @@ const App = {
     nxt.t = st.w === "p1" ? "p2" : "p1"; // loser eventually fires first (joiner-first rule below)
     nxt.lg = ["🔄 Rematch!"];
     this.st = nxt;
-    this.paint = new Set(); this.placeMsg = "";
+    this.paint = new Set(); this.fleet = null; this.pick = -1; this.noAutoFleet = false; this.placeMsg = "";
     this.anim = null; this.sel = null; this.mode = "fire";
     this.overSeen = null;          // so the next result gets counted too
     this.stopReel();
@@ -1228,6 +1363,7 @@ const App = {
       let cls = "cell", mark = "";
       if (variant === "place") {
         if (this.paint.has(i)) cls += " painted";
+        if (this.fleet && this.pick >= 0 && shipCellsOf(this.fleet[this.pick], s).includes(i)) cls += " picked";
         cells += `<div class="${cls}" data-tap="paint" data-i="${i}"></div>`;
         continue;
       }
@@ -1495,6 +1631,12 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
           this.nudgeHtml(oppName ? `Give ${oppName} a nudge:` : `Invite your opponent — their link is inside:`);
         return;
       }
+      // First time on this board, hand them a fleet rather than an empty ocean.
+      if (this.fleet === null && this.paint.size === 0 && !this.noAutoFleet) {
+        const auto = randomFleet(st.s, rosterFor(st));
+        if (auto) { this.fleet = auto; this.paint = fleetCells(auto, st.s); }
+        this.noAutoFleet = true;
+      }
       const needName = !nameOf(st, this.me);
       const nmEl = document.getElementById("nm");
       const typedName = (nmEl ? nmEl.value : (lsGet("sks:name") || "")).replace(/"/g, "&quot;");
@@ -1504,18 +1646,27 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
         <div class="card">
           <h2>${needName ? `Join ${st.n1}'s battle!` : `Draw your fleet, ${nameOf(st, this.me)}`}</h2>
           ${needName ? `<div class="label">Your name</div><input type="text" id="nm" value="${typedName}" placeholder="Your name…">` : ""}
-          <div class="body" style="margin-top:8px">${isClassic(st)
-            ? "Tap squares to lay out the classic fleet — straight lines, no L-shapes."
-            : "Tap squares to sketch ships — straight lines only, any lengths."}</div>
-          <div class="body" style="margin-top:4px"><b>${st.b - this.paint.size}</b> of ${st.b} squares left${!isClassic(st) && fleet ? ` · fleet: ${fleet}` : ""}</div>
+          <div class="body" style="margin-top:8px">${this.fleet
+            ? (this.pick >= 0
+                ? "Now tap where it should go, or use \u21bb to turn it."
+                : "Tap a ship to pick it up, then tap a new spot. Happy with it? Ready for battle.")
+            : isClassic(st)
+            ? "Tap squares to lay out the classic fleet \u2014 straight lines, no L-shapes."
+            : "Tap squares to sketch ships \u2014 straight lines only, any lengths."}</div>
+          <div class="body" style="margin-top:4px"><b>${st.b - this.paint.size}</b> of ${st.b} squares left${!isClassic(st) && fleet ? ` \u00b7 fleet: ${fleet}` : ""}</div>
         </div>
-        ${this.fleetChecklistHtml()}
+        ${this.fleet ? "" : this.fleetChecklistHtml()}
         ${this.boardHtml("place")}
         ${this.placeMsg ? `<div class="warn">${this.placeMsg}</div>` : ""}
-        ${!analysis.ok ? `<div class="warn">${analysis.error}</div>` : ""}
+        ${!this.fleet && !analysis.ok ? `<div class="warn">${analysis.error}</div>` : ""}
         <div class="row" style="margin-top:12px">
+          <span class="btn" onclick="App.shuffleFleet()">\uD83C\uDFB2 ${this.fleet ? "Reshuffle" : "Random fleet"}</span>
+          ${this.fleet ? `<span class="btn ${this.pick < 0 ? "dim" : "primary"}" onclick="App.rotatePick()">\u21bb Turn</span>` : ""}
+          ${this.fleet ? `<span class="btn" onclick="App.handDraw()">\u270f\ufe0e Draw by hand</span>` : ""}
           <span class="btn" onclick="App.clearPaint()">Clear</span>
-          <span class="btn primary" onclick="App.confirmPlacement()">Ready for battle!</span>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <span class="btn primary big" style="max-width:280px" onclick="App.confirmPlacement()">Ready for battle!</span>
         </div>`;
       return;
     }
