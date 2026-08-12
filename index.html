@@ -751,7 +751,7 @@ const App = {
         // out of sync — take server truth
         this.st = e.data.st;
         this.resync = false;
-        this.netErr = "Whoops — the game had moved on. Board refreshed, try again.";
+        this.netErr = "They got a move in first — board refreshed, take your shot.";
         this.view = this.viewFor(this.st);
         lsSet("sks:seen:" + this.id, String(this.st.mv));
       } else {
@@ -1005,7 +1005,8 @@ const App = {
 
   async doAction() {
     const st = this.st, me = this.me, opp = other(me);
-    if (st.ph !== "b" || st.t !== me || this.saving) return;
+    if (st.ph !== "b" || st.t !== me) return;
+    if (this.saving) { this.placeMsg = ""; this.netErr = "One second — still sending your last shot…"; this.render(); return; }
     // Support powers are confirmed through this same button.
     if (POWERS[this.mode] && POWERS[this.mode].kind === "sup") { await this.useSupport(this.mode); return; }
     if (aimOf(this.mode) !== "none" && this.sel == null) return;   // storm & co. need no aim
