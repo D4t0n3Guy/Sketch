@@ -309,6 +309,36 @@ const idxOf = (r, c, s) => r * s + c;
 const chAt = (str, i) => str.charAt(i) || ".";
 function chSet(str, i, ch) { return str.substring(0, i) + ch + str.substring(i + 1); }
 
+/* Classic mode: a fixed, traditional fleet on a fixed 10x10 board. */
+const CLASSIC = { size: 10, fleet: { 4: 1, 3: 2, 2: 3, 1: 4 } };
+const CLASSIC_CELLS = Object.entries(CLASSIC.fleet).reduce((t, [len, n]) => t + (+len) * n, 0);
+const isClassic = st => !!(st && st.cl);
+
+/* What's drawn so far, tolerant of half-finished shapes, for the live checklist. */
+function fleetTally(cellSet, s) {
+  const res = analyzeShips(cellSet, s);
+  if (!res.ok) return { ok: false, error: res.error, counts: {} };
+  const counts = {};
+  for (const sh of res.ships) counts[sh.length] = (counts[sh.length] || 0) + 1;
+  return { ok: true, counts, ships: res.ships };
+}
+
+/* Does the drawn fleet match the classic roster exactly? */
+function classicCheck(cellSet, s) {
+  const t = fleetTally(cellSet, s);
+  if (!t.ok) return t;
+  const want = CLASSIC.fleet, missing = [], extra = [];
+  const lens = new Set([...Object.keys(want), ...Object.keys(t.counts)].map(Number));
+  for (const len of [...lens].sort((a, b) => b - a)) {
+    const have = t.counts[len] || 0, need = want[len] || 0;
+    if (have < need) missing.push(`${need - have}\u00D7 ${len}-square`);
+    if (have > need) extra.push(`${have - need} too many ${len}-square`);
+  }
+  if (missing.length || extra.length)
+    return { ok: false, error: [extra.join(", "), missing.length ? "still need " + missing.join(", ") : ""].filter(Boolean).join(" \u2014 ") };
+  return { ok: true, ships: t.ships };
+}
+
 function analyzeShips(cellSet, s) {
   const seen = new Set(), ships = [];
   for (const start of cellSet) {
@@ -374,10 +404,10 @@ function allSunk(ships, sa) {
 }
 function findShipAt(ships, i) { return ships.find(sh => sh.includes(i)); }
 
-function freshState(s, b, n1, n2) {
+function freshState(s, b, n1, n2, cl) {
   const blank = ".".repeat(s * s);
   return {
-    v: 3, mv: 1, s, b,
+    v: 3, mv: 1, s, b, cl: cl ? 1 : 0,
     n1: n1 || "", n2: n2 || "",
     ph: "p", t: "p1", w: "",
     sh1: [], sh2: [],
@@ -404,6 +434,7 @@ const App = {
   reelPos: 0, reelLen: 0,
   overSeen: null,
   vs: "",
+  classic: false,
   view: "home",
   tab: "target",
   mode: "fire",
@@ -653,15 +684,18 @@ const App = {
 
   /* ---------- flows ---------- */
   startSetup(vs) { this.netErr = ""; this.vs = vs || ""; this.view = "setup"; this.render(); },
+  setClassic(on) { this.classic = !!on; this.render(); },
   forgetMate(key) { crewForget(key); this.render(); },
 
   async createGame() {
     const name = document.getElementById("nm").value.trim();
     if (!name) { alert("Give us a name, Admiral!"); return; }
     lsSet("sks:name", name);
-    const s = parseInt(document.querySelector(".sizeBtn.primary").dataset.s, 10);
-    const b = parseInt(document.getElementById("budget").textContent, 10);
-    const st = freshState(s, b, name);
+    const s = this.classic ? CLASSIC.size
+      : parseInt(document.querySelector(".sizeBtn.primary").dataset.s, 10);
+    const b = this.classic ? CLASSIC_CELLS
+      : parseInt(document.getElementById("budget").textContent, 10);
+    const st = freshState(s, b, name, "", this.classic);
     this.view = "loading"; this.render();
     try {
       const res = await api({ action: "create", st });
@@ -706,6 +740,25 @@ const App = {
   },
   clearPaint() { this.paint = new Set(); this.placeMsg = ""; this.render(); },
 
+  /* Classic gives you a roster to fill, so show what's left as you draw. */
+  fleetChecklistHtml() {
+    const st = this.st;
+    if (!isClassic(st)) return "";
+    const t = fleetTally(this.paint, st.s);
+    const rows = Object.keys(CLASSIC.fleet).map(Number).sort((a, b) => b - a).map(len => {
+      const need = CLASSIC.fleet[len], have = t.ok ? (t.counts[len] || 0) : 0;
+      const done = have === need;
+      return `<div class="crewRow" style="padding:5px 0">
+        <span class="body">${"\u25A0".repeat(len)} <span style="opacity:0.6">${len}-square</span></span>
+        <span class="body" style="color:${done ? "#3d8a4f" : have > need ? "#c0392b" : "#8a8f98"}">
+          ${have} / ${need}${done ? " \u2713" : ""}</span>
+      </div>`;
+    }).join("");
+    return `<div class="card" style="margin-top:10px"><div class="label" style="margin-top:0">Your fleet</div>
+      ${rows}
+      ${t.ok ? "" : `<div class="hint" style="color:#c0392b">${t.error}</div>`}</div>`;
+  },
+
   async confirmPlacement() {
     const st = this.st;
     if (!nameOf(st, this.me)) {
@@ -715,10 +768,12 @@ const App = {
       lsSet("sks:name", nm);
     }
     if (this.paint.size !== st.b) {
-      this.placeMsg = `Use exactly ${st.b} points — you've placed ${this.paint.size}.`;
+      this.placeMsg = isClassic(st)
+        ? `The classic fleet is exactly ${st.b} squares — you've drawn ${this.paint.size}.`
+        : `Use exactly ${st.b} points — you've placed ${this.paint.size}.`;
       this.render(); return;
     }
-    const res = analyzeShips(this.paint, st.s);
+    const res = isClassic(st) ? classicCheck(this.paint, st.s) : analyzeShips(this.paint, st.s);
     if (!res.ok) { this.placeMsg = res.error; this.render(); return; }
     setShips(st, this.me, res.ships);
     const oppShips = shipsOf(st, other(this.me));
@@ -950,7 +1005,8 @@ const App = {
       if (hit) {
         const ship = findShipAt(oppShips, i);
         if (ship && shipSunk(ship, sa)) {
-          gained += ship.length; sunkLens.push(ship.length); wrecks.push(ship);
+          if (!isClassic(st)) gained += ship.length;
+          sunkLens.push(ship.length); wrecks.push(ship);
         }
       }
     }
@@ -961,7 +1017,8 @@ const App = {
        the blast finishes that one off, it detonates too. */
     const blast = [];
     const spent = new Set();
-    const queue = [...wrecks];
+    // Wreck detonations are a SketchShip invention — classic plays it straight.
+    const queue = isClassic(st) ? [] : [...wrecks];
     while (queue.length) {
       const wreck = queue.shift();
       if (spent.has(wreck[0])) continue;
@@ -1039,7 +1096,7 @@ const App = {
     } else {
       logTxt = `✈️ ${nameOf(st, me)} called an airstrike${sunkLens.length ? " — ship down!" : ""}`;
     }
-    if (gained) logTxt += ` (+${gained}★)`;
+    if (gained && !isClassic(st)) logTxt += ` (+${gained}★)`;
     if (blast.length) logTxt += ` The wreck blew ${blast.length} more square${blast.length > 1 ? "s" : ""} open.`;
     if (tripped.length) logTxt += ` \u2693 MINE! ${nameOf(st, opp)}'s trap ends the run.`;
     if (spotTxt) logTxt += spotTxt;
@@ -1067,7 +1124,7 @@ const App = {
 
   async rematch() {
     const st = this.st;
-    const nxt = freshState(st.s, st.b, st.n1, st.n2);
+    const nxt = freshState(st.s, st.b, st.n1, st.n2, st.cl);
     nxt.mv = st.mv; // commit() bumps it
     nxt.t = st.w === "p1" ? "p2" : "p1"; // loser eventually fires first (joiner-first rule below)
     nxt.lg = ["🔄 Rematch!"];
@@ -1295,10 +1352,12 @@ const App = {
   helpHtml() {
     if (!this.help) return "";
     return `<div class="card"><h2>How to play</h2><div class="body">
-      Draw your fleet with your ship points — one big battleship, a swarm of tiny boats, anything, as long as ships are straight lines.
+      ${this.st && isClassic(this.st)
+        ? "Classic rules: a 10\u00D710 ocean and the traditional fleet \u2014 one 4-square ship, two 3-square, three 2-square and four single squares. No powers, no \u2605."
+        : "Draw your fleet with your ship points \u2014 one big battleship, a swarm of tiny boats, anything, as long as ships are straight lines."}
       Take turns firing one shot. <b>Land a hit and you shoot again</b> — keep going until you miss.
-      Sink a ship, pocket its length in ★.<br><br>
-<b>Attacks</b> (these use your turn):<br>
+      ${this.st && isClassic(this.st) ? "" : "Sink a ship, pocket its length in \u2605. A sunk ship also detonates, damaging every square around the wreck."}<br><br>
+${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br>
       <b>⚓ Mine (${POWERS.mine.cost}★)</b> — hide a mine in your own water. Shoot it and their run ends on the spot.<br>
       <b>📡 Sonar (${POWERS.sonar.cost}★)</b> — scan a 3×3 area, no damage.<br>
       <b>🔧 Repair (${POWERS.repair.cost}★)</b> — patch one damaged square on a ship that hasn't sunk.<br>
@@ -1311,7 +1370,7 @@ const App = {
       <b>📻 Intercept (${POWERS.radio.cost}★)</b> — learn the size of their biggest ship still afloat.<br>
       <b>🚁 Spotter (${POWERS.spot.cost}★)</b> — your next miss tells you if a ship sits beside it.<br>
       <b>💨 Smoke (${POWERS.smoke.cost}★)</b> — their next sonar or intercept comes back a lie.<br>
-      <b>⚡ Double (${POWERS.dbl.cost}★)</b> — your next shot earns another go even if it misses.<br><br>
+      <b>⚡ Double (${POWERS.dbl.cost}★)</b> — your next shot earns another go even if it misses.<br><br>`}
       No timers. The board updates by itself — the 💬 button just texts them a "your move" nudge.
       One link per game: whoever opens it on their own phone gets their own side, and it stays theirs.
     </div></div>`;
@@ -1399,6 +1458,15 @@ const App = {
           ${this.vs ? `<div class="hint" style="margin-top:0">Challenging <b>${this.vs}</b> — send them the link once you've drawn your fleet.</div>` : ""}
           <div class="label">Your name</div>
           <input type="text" id="nm" value="${savedName}" placeholder="Admiral…">
+          <div class="label">Rules</div>
+          <div class="row" style="justify-content:flex-start">
+            <span class="btn small ${this.classic?"":"primary"}" onclick="App.setClassic(false)">🎨 Freeform</span>
+            <span class="btn small ${this.classic?"primary":""}" onclick="App.setClassic(true)">⚓ Classic</span>
+          </div>
+          <div class="powDesc" style="margin-left:0">${this.classic
+            ? `<b>Classic</b><br>10×10, the traditional fleet — one 4-square, two 3-square, three 2-square and four single squares. No powers, no ★.`
+            : `<b>Freeform</b><br>Draw any fleet you like within a points budget, and earn ★ to spend on the twelve powers.`}</div>
+          ${this.classic ? "" : `
           <div class="label">Ocean size</div>
           <div class="row" style="justify-content:flex-start">
             <span class="btn small sizeBtn" data-s="8" onclick="App.pickSize(this)">8×8</span>
@@ -1410,7 +1478,7 @@ const App = {
             <span class="btn small" onclick="App.bumpBudget(-2)">−</span>
             <h2 id="budget" style="min-width:40px;text-align:center;margin:0">14</h2>
             <span class="btn small" onclick="App.bumpBudget(2)">+</span>
-          </div>
+          </div>`}
           <div style="margin-top:16px"><span class="btn primary big" onclick="App.createGame()">Set sail ⛵</span></div>
         </div>`;
       return;
@@ -1436,9 +1504,12 @@ const App = {
         <div class="card">
           <h2>${needName ? `Join ${st.n1}'s battle!` : `Draw your fleet, ${nameOf(st, this.me)}`}</h2>
           ${needName ? `<div class="label">Your name</div><input type="text" id="nm" value="${typedName}" placeholder="Your name…">` : ""}
-          <div class="body" style="margin-top:8px">Tap squares to sketch ships — straight lines only, any lengths.</div>
-          <div class="body" style="margin-top:4px"><b>${st.b - this.paint.size}</b> of ${st.b} points left${fleet ? ` · fleet: ${fleet}` : ""}</div>
+          <div class="body" style="margin-top:8px">${isClassic(st)
+            ? "Tap squares to lay out the classic fleet — straight lines, no L-shapes."
+            : "Tap squares to sketch ships — straight lines only, any lengths."}</div>
+          <div class="body" style="margin-top:4px"><b>${st.b - this.paint.size}</b> of ${st.b} squares left${!isClassic(st) && fleet ? ` · fleet: ${fleet}` : ""}</div>
         </div>
+        ${this.fleetChecklistHtml()}
         ${this.boardHtml("place")}
         ${this.placeMsg ? `<div class="warn">${this.placeMsg}</div>` : ""}
         ${!analysis.ok ? `<div class="warn">${analysis.error}</div>` : ""}
@@ -1459,7 +1530,7 @@ const App = {
     let controls = "";
     if (myTurn) {
       const pts = ptsOf(st, me);
-      const canPower = pts >= CHEAPEST;
+      const canPower = !isClassic(st) && pts >= CHEAPEST;
       const bf = bfOf(st, me);
       const chip = m => {
         const P = POWERS[m];
@@ -1501,7 +1572,7 @@ const App = {
           <span class="btn primary big" style="max-width:280px;${!ready?"opacity:0.4;pointer-events:none":this.saving?"pointer-events:none":""}" onclick="App.doAction()">${label}</span>
         </div>
         <div class="hint">${hint}</div>
-        ${POWERS[this.mode] ? `<div class="powDesc"><b>${POWERS[this.mode].icon} ${POWERS[this.mode].label} \u2014 ${POWERS[this.mode].cost}\u2605</b><br>${POWERS[this.mode].desc}</div>` : ""}
+        ${!isClassic(st) && POWERS[this.mode] ? `<div class="powDesc"><b>${POWERS[this.mode].icon} ${POWERS[this.mode].label} \u2014 ${POWERS[this.mode].cost}\u2605</b><br>${POWERS[this.mode].desc}</div>` : ""}
         ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
           <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
           <span class="btn small ${this.dir==="col"?"primary":""}" onclick="App.setDir('col')">↕︎ Down</span>
