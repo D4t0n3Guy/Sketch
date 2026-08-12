@@ -517,6 +517,7 @@ const App = {
   fleet: null,      // arranged ships, or null while free-drawing
   pick: -1,         // index of the ship currently picked up
   noAutoFleet: false,
+  lockedOut: null,
   placeMsg: "",
   anim: null,
   copied: false,
@@ -541,6 +542,12 @@ const App = {
       this.applyServer(id, res, true);
     } catch (e) {
       this.view = "home";
+      if (e.status === 403 && e.data && e.data.seats) {
+        this.lockedOut = { id, seats: e.data.seats };
+        this.netErr = "";
+        this.render();
+        return;
+      }
       this.netErr = e.status === 404
         ? "That game wasn't found — it may have been erased."
         : e.status === 403
@@ -1273,9 +1280,42 @@ const App = {
 
   homeBtn() {
     if (this.pollTimer) clearInterval(this.pollTimer);
-    this.st = null; this.id = null; this.me = null;
+    this.st = null; this.id = null; this.me = null; this.lockedOut = null;
     history.replaceState(null, "", location.pathname);
     this.view = "home"; this.render();
+  },
+
+  /* Your identity lives in this browser's storage. Clear it, switch phones, or
+     open the link somewhere else and the game no longer recognises you. */
+  lockedOutHtml() {
+    const { id, seats } = this.lockedOut;
+    const btn = (slot, nm) => nm
+      ? `<span class="btn primary" onclick="App.reclaim('${id}','${slot}')">I'm ${nm}</span>` : "";
+    return `<div class="card">
+      <h2>This game already has two players</h2>
+      <div class="body">It's between <b>${seats.p1 || "?"}</b> and <b>${seats.p2 || "?"}</b>.
+        If one of them is you — new phone, cleared history, or the link opened in a different
+        browser — take your seat back here.</div>
+      <div class="row" style="margin-top:12px">${btn("p1", seats.p1)}${btn("p2", seats.p2)}</div>
+      <div class="hint">Whoever you pick will be told in the game log, so pick honestly.</div>
+      <div class="row" style="margin-top:10px"><span class="btn" onclick="App.homeBtn()">Never mind</span></div>
+    </div>`;
+  },
+
+  async reclaim(id, slot) {
+    this.view = "loading"; this.render();
+    try {
+      const res = await api({ action: "get", id, claim: slot });
+      this.lockedOut = null;
+      history.replaceState(null, "", "#g=" + id);
+      this.applyServer(id, res, true);
+      this.render();
+      this.pollStart();
+    } catch (e) {
+      this.lockedOut = null;
+      this.netErr = "Couldn't take that seat — try again in a moment.";
+      this.view = "home"; this.render();
+    }
   },
 
   openSaved(id) {
@@ -1555,6 +1595,10 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
       return;
     }
 
+    if (this.lockedOut) {
+      el.innerHTML = this.headerHtml() + this.netErrHtml() + this.lockedOutHtml();
+      return;
+    }
     if (this.view === "home") {
       const games = Object.entries(myGames()).sort((a, b) => b[1].ts - a[1].ts);
       const list = games.length ? `<div class="card"><h2>Your battles</h2>` +
