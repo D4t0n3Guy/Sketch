@@ -103,13 +103,28 @@ export default async (req) => {
     }
 
     if (!body.st) return json({ error: "missing state" }, 400);
-    const incoming = Number(body.st.mv) || 0;
-    const held = Number(rec.st && rec.st.mv) || 0;
-    if (incoming <= held) {
-      // Genuinely behind: the other player really did move first.
-      return json({ error: "stale", st: rec.st }, 409);
+    const held = rec.st || {};
+    const heldMv = Number(held.mv) || 0;
+
+    /* During battle the question that actually matters is "is it your turn?",
+       not "does your counter match mine?". Counter matching produced false
+       conflicts whenever a player took several shots in a row, because each
+       save had to guess a number the server was still catching up on. The
+       server owns the counter now; the client just sends its board. */
+    if (held.ph === "b") {
+      if (held.t !== s.you) {
+        return json({ error: "stale", st: rec.st, reason: "not-your-turn" }, 409);
+      }
+      rec.st = { ...body.st, mv: heldMv + 1 };
+    } else {
+      // Placement: both players write, so keep the ordering guard here.
+      const incoming = Number(body.st.mv) || 0;
+      if (incoming <= heldMv) {
+        return json({ error: "stale", st: rec.st, reason: "behind" }, 409);
+      }
+      rec.st = body.st;
     }
-    rec.st = body.st;
+
     await store.setJSON(body.id, rec);
     return json({ ok: true, st: rec.st });
   }
