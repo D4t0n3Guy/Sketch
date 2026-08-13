@@ -538,7 +538,12 @@ const App = {
   async open(id) {
     this.view = "loading"; this.render();
     try {
-      const res = await api({ action: "get", id });
+      const seen = parseInt(lsGet("sks:seen:" + id) || "0", 10);
+      let res = await api({ action: "get", id });
+      for (let k = 0; k < 3 && (Number(res.st && res.st.mv) || 0) < seen; k++) {
+        await new Promise(r => setTimeout(r, 450));
+        res = await api({ action: "get", id });
+      }
       this.applyServer(id, res, true);
     } catch (e) {
       this.view = "home";
@@ -565,6 +570,8 @@ const App = {
     this.me = res.you;
     this.st = res.st;
     this.netErr = "";
+    const hw = parseInt(lsGet("sks:seen:" + id) || "0", 10);
+    if ((Number(res.st.mv) || 0) > hw) lsSet("sks:seen:" + id, String(res.st.mv));
     saveMyGame(id, {
       label: `${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
     });
