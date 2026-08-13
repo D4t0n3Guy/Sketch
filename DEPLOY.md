@@ -27,3 +27,5 @@ other device that opens the link, and refuses everyone after that.
 Open the site, start a new game, and confirm it reaches the server. A
 network error on creation means the function isn't running — check the
 deploy log for `game.mjs`.
+
+<!-- build trigger -->
