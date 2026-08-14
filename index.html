@@ -1787,11 +1787,16 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
                                                : "Lane set — it stops at the first ship it meets")
         : this.sel==null ? "Tap a square on their waters to aim"
         : "Locked on — tap the button above to shoot";
+      /* This was suppressed for plain shots back when tapping a square fired
+         straight away. That behaviour was reverted; the button must not be. */
+      const wrongTab = aim === "enemy" && this.tab !== "target";
       controls = `
-        ${this.mode === "fire" ? "" : `<div class="row" style="margin-top:10px">
-          <span class="btn primary big" style="max-width:280px;${!ready?"opacity:0.4;pointer-events:none":this.saving?"pointer-events:none":""}" onclick="App.doAction()">${label}</span>
-        </div>`}
-        <div class="hint">${hint}</div>
+        <div class="row" style="margin-top:10px">
+          ${wrongTab
+            ? `<span class="btn primary big" style="max-width:280px" onclick="App.setTab('target')">\uD83C\uDFAF Take your shot</span>`
+            : `<span class="btn primary big" style="max-width:280px;${!ready?"opacity:0.4;pointer-events:none":this.saving?"pointer-events:none":""}" onclick="App.doAction()">${label}</span>`}
+        </div>
+        <div class="hint">${wrongTab ? "It's your turn \u2014 tap through to their waters" : hint}</div>
         ${!isClassic(st) && POWERS[this.mode] ? `<div class="powDesc"><b>${POWERS[this.mode].icon} ${POWERS[this.mode].label} \u2014 ${POWERS[this.mode].cost}\u2605</b><br>${POWERS[this.mode].desc}</div>` : ""}
         ${this.mode === "strike" || this.mode === "torp" ? `<div class="row" style="margin-top:8px">
           <span class="btn small ${this.dir==="row"?"primary":""}" onclick="App.setDir('row')">↔︎ Across</span>
