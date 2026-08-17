@@ -464,6 +464,12 @@ function setName(st, p, v) { if (p === "p1") st.n1 = v; else st.n2 = v; }
 /* A turn can now be several shots long, since a hit buys another go. Collect
    them so the other player can watch the whole run, in order, when they return.
    `open` means the streak is still going — don't replay it yet. */
+/* Every act, in order, for the end-of-game replay. Capped so a long grudge
+   match can't bloat the record past what Blobs will happily carry. */
+function pushHist(st, act) {
+  st.hy = [...(st.hy || []), act].slice(-400);
+}
+
 function pushReel(st, me, act, keepTurn) {
   const streak = st.rl && st.rl.by === me && st.rl.open;
   const acts = streak ? [...st.rl.acts, act] : [act];
@@ -489,7 +495,7 @@ function freshState(s, b, n1, n2, cl) {
     pt1: 0, pt2: 0,
     bf1: {}, bf2: {},      // armed support buffs
     mn1: [], mn2: [],      // mines laid in your own waters
-    la: null, lg: [],
+    la: null, lg: [], hy: [],
   };
 }
 
@@ -505,6 +511,11 @@ const App = {
   reelTimer: null,
   replaying: false,
   reelPos: 0, reelLen: 0,
+  fullReplay: false,      // watching the whole battle back
+  fullPos: 0,             // how many acts have been played
+  fullAuto: false,        // playing vs paused
+  fullTimer: null,
+  fullMask: null,         // { p1:Set, p2:Set } squares not yet fired on
   overSeen: null,
   vs: "",
   classic: false,
@@ -591,6 +602,7 @@ const App = {
     if (firstLoad && this.view === "place" && shipsOf(res.st, this.me).length === 0) {
       this.paint = new Set(); this.fleet = null; this.pick = -1; this.noAutoFleet = false; this.placeMsg = "";
     }
+    if (this.fullReplay && res.st.ph !== "o") this.stopFull();
     this.render();
     if (replay) this.playReel(rl);
     this.pollStart();
@@ -691,6 +703,114 @@ const App = {
     const n = rl.acts.length;
     return `<div class="row" style="margin-top:8px">
       <span class="btn small" onclick="App.replayReel()">▶︎ Replay their turn (${n} shot${n > 1 ? "s" : ""})</span></div>`;
+  },
+
+  /* ---------- whole-battle replay ----------
+     Rebuilds the boards from the recorded act list, so squares that hadn't been
+     hit yet stay blank as it plays forward. */
+  showFull() {
+    const st = this.st;
+    return !!(st && st.ph === "o" && st.hy && st.hy.length);
+  },
+
+  fullRun() { return (this.st && this.st.hy) || []; },
+
+  /* Which squares each side had NOT yet been fired on, after `n` acts. */
+  buildFullMask(n) {
+    const st = this.st, hy = this.fullRun();
+    // At the end, hide nothing — the last frame must match the real final board
+    // even if some mark predates the history (repairs, or an older game).
+    if (n >= hy.length) return { p1: new Set(), p2: new Set() };
+    const shown = { p1: new Set(), p2: new Set() };
+    for (let k = 0; k < n && k < hy.length; k++) {
+      const a = hy[k];
+      const target = a.by === "p1" ? "p2" : "p1";   // you fire at the other side
+      for (const cell of (a.c || [])) shown[target].add(cell[0]);
+    }
+    const hide = { p1: new Set(), p2: new Set() };
+    for (const side of ["p1", "p2"]) {
+      const sa = saOf(st, side);
+      for (let i = 0; i < sa.length; i++)
+        if (sa[i] !== "." && !shown[side].has(i)) hide[side].add(i);
+    }
+    return hide;
+  },
+
+  startFull() {
+    if (!this.showFull()) return;
+    this.stopReel();
+    this.fullReplay = true;
+    this.fullPos = 0;
+    this.fullAuto = true;
+    this.fullMask = this.buildFullMask(0);
+    this.tab = "target";
+    this.render();
+    this.fullStep();
+  },
+
+  fullStep() {
+    if (this.fullTimer) { clearTimeout(this.fullTimer); this.fullTimer = null; }
+    if (!this.fullReplay) return;
+    const hy = this.fullRun();
+    if (this.fullPos >= hy.length) { this.fullAuto = false; this.anim = null; this.render(); return; }
+    const a = hy[this.fullPos];
+    // show it from the defender's side, the way they'd have seen it arrive
+    this.tab = a.by === this.me ? "target" : "fleet";
+    this.anim = { ...a, incoming: true };
+    this.fullPos++;
+    this.fullMask = this.buildFullMask(this.fullPos);
+    this.render();
+    if (this.fullAuto)
+      this.fullTimer = setTimeout(() => this.fullStep(), this.actMs(a) + 350);
+  },
+
+  fullSeek(delta) {
+    if (!this.fullReplay) return;
+    this.fullAuto = false;
+    if (this.fullTimer) { clearTimeout(this.fullTimer); this.fullTimer = null; }
+    const hy = this.fullRun();
+    this.fullPos = Math.max(0, Math.min(hy.length, this.fullPos + delta));
+    const a = this.fullPos > 0 ? hy[this.fullPos - 1] : null;
+    this.anim = a ? { ...a, incoming: true } : null;
+    if (a) this.tab = a.by === this.me ? "target" : "fleet";
+    this.fullMask = this.buildFullMask(this.fullPos);
+    this.render();
+  },
+
+  fullToggle() {
+    if (!this.fullReplay) return;
+    this.fullAuto = !this.fullAuto;
+    if (this.fullAuto) {
+      if (this.fullPos >= this.fullRun().length) this.fullPos = 0;
+      this.fullStep();
+    } else if (this.fullTimer) {
+      clearTimeout(this.fullTimer); this.fullTimer = null;
+      this.render();
+    }
+  },
+
+  stopFull() {
+    if (this.fullTimer) { clearTimeout(this.fullTimer); this.fullTimer = null; }
+    this.fullReplay = false; this.fullAuto = false;
+    this.fullMask = null; this.anim = null;
+    this.render();
+  },
+
+  fullBarHtml() {
+    const hy = this.fullRun();
+    const a = this.fullPos > 0 ? hy[this.fullPos - 1] : null;
+    const who = a ? (nameOf(this.st, a.by) || (a.by === this.me ? "You" : "Them")) : "";
+    const P = a && POWERS[a.ty];
+    const what = !a ? "Ready" : P ? `${P.icon} ${P.label}` : "🎯 Shot";
+    return `<div class="card" style="margin-top:10px;text-align:center">
+      <div class="body"><b>Move ${this.fullPos} of ${hy.length}</b>${a ? ` · ${who} · ${what}` : ""}</div>
+      <div class="row" style="margin-top:8px">
+        <span class="btn small" onclick="App.fullSeek(-1)">⏮</span>
+        <span class="btn small primary" onclick="App.fullToggle()">${this.fullAuto ? "⏸ Pause" : "▶︎ Play"}</span>
+        <span class="btn small" onclick="App.fullSeek(1)">⏭</span>
+        <span class="btn small" onclick="App.stopFull()">✕ Done</span>
+      </div>
+    </div>`;
   },
 
   /* ---------- polling ---------- */
@@ -1061,7 +1181,7 @@ const App = {
       setPts(st, me, ptsOf(st, me) - POWERS.sonar.cost);
       st.t = opp;
       st.la = { by: me, ty: "sonar", c: results, k: [], center: aim };
-      pushReel(st, me, st.la, false);
+      pushReel(st, me, st.la, false); pushHist(st, st.la);
       st.lg = [...st.lg.slice(-4), `\uD83D\uDCE1 ${nameOf(st, me)} scanned the waters` +
         (smoked ? ` \u2014 but \uD83D\uDCA8 ${nameOf(st, opp)}'s smoke fouled the read` : "")];
       this.anim = { ty: "sonar", c: results, center: this.sel };
@@ -1079,7 +1199,7 @@ const App = {
       setPts(st, me, ptsOf(st, me) - POWERS.repair.cost);
       st.t = opp;
       st.la = { by: me, ty: "repair", c: [], k: [] };
-      blankReel(st, me);
+      blankReel(st, me); pushHist(st, st.la);
       st.lg = [...st.lg.slice(-4), `\uD83D\uDD27 ${nameOf(st, me)}'s crew patched a hull breach`];
       this.sel = null; this.mode = "fire"; this.netErr = "";
       this.render(); this.commit();
@@ -1094,7 +1214,7 @@ const App = {
       setPts(st, me, ptsOf(st, me) - POWERS.mine.cost);
       st.t = opp;
       st.la = { by: me, ty: "mine", c: [], k: [] };
-      blankReel(st, me);
+      blankReel(st, me); pushHist(st, st.la);
       st.lg = [...st.lg.slice(-4), `\u2693 ${nameOf(st, me)} slipped a mine into the shallows`];
       this.sel = null; this.mode = "fire"; this.netErr = "";
       this.render(); this.commit();
@@ -1270,6 +1390,7 @@ const App = {
 
     st.t = struck ? me : opp;
     st.la = { by: me, ty: mode, d: this.dir, c: results, k: sunkLens, center: aim };
+    pushHist(st, st.la);
     pushReel(st, me, st.la, struck);
     st.lg = [...st.lg.slice(-4), logTxt];
 
@@ -1297,7 +1418,7 @@ const App = {
     this.paint = new Set(); this.fleet = null; this.pick = -1; this.noAutoFleet = false; this.placeMsg = "";
     this.anim = null; this.sel = null; this.mode = "fire";
     this.overSeen = null;          // so the next result gets counted too
-    this.stopReel();
+    this.stopReel(); this.stopFull();
     this.view = "place";
     this.render();
     this.commit();
@@ -1432,15 +1553,17 @@ const App = {
       }
       if (variant === "fleet") {
         const ch = chAt(saOf(st, me), i);
+        const fmask = this.fullMask && this.fullMask[me];
         const ownAim = st.ph === "b" && st.t === me && aimOf(this.mode) === "own" && !this.replaying;
         if (freshMap[i]) {
           const f = freshMap[i];
           const delay = this.cellDelay(anim, f.k, f.b === "b");
           mark = this.markSvg(f.r, true, delay);
         } else if (animOnThis && anim.mask && anim.mask.has(i)) mark = "";
+        else if (fmask && fmask.has(i)) mark = "";
         else if (ch === "h") mark = this.markSvg("h");
         else if (ch === "m") mark = this.markSvg("m");
-        if (!mark && mnOf(st, me).includes(i)) mark = `<span class="mineMark">\u2693</span>`;
+        if (!mark && !fmask && mnOf(st, me).includes(i)) mark = `<span class="mineMark">\u2693</span>`;
         if (ownAim) {
           if (this.sel === i) cls += " sel";
           cells += `<div class="${cls}" data-tap="own" data-i="${i}">${mark}</div>`;
@@ -1451,12 +1574,15 @@ const App = {
       }
       const ch = chAt(saOf(st, opp), i);
       const intel = chAt(intelOf(st, me), i);
+      const fmask = this.fullMask && this.fullMask[opp];
       if (freshMap[i]) {
         const f = freshMap[i];
         const delay = this.cellDelay(anim, f.k, f.b === "b");
         mark = this.markSvg(f.r, true, delay);
-      } else if (ch === "h") mark = this.markSvg("h");
+      } else if (fmask && fmask.has(i)) mark = "";
+      else if (ch === "h") mark = this.markSvg("h");
       else if (ch === "m") mark = this.markSvg("m");
+      else if (fmask) mark = "";               // no sonar intel mid-replay either
       else if (intel === "y") mark = this.markSvg("p");
       else if (intel === "n") mark = this.markSvg("c");
       if (this.sel != null && st.t === me && st.ph === "b") {
@@ -1814,7 +1940,7 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
     }
 
     let overCard = "";
-    if (st.ph === "o") {
+    if (st.ph === "o" && !this.fullReplay) {
       const iWon = st.w === me;
       const mySunk = shipsOf(st, opp).filter(sh => shipSunk(sh, saOf(st, opp))).length;
       const theirSunk = shipsOf(st, me).filter(sh => shipSunk(sh, saOf(st, me))).length;
@@ -1828,6 +1954,9 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
           <span class="btn primary big" style="max-width:260px" onclick="App.rematch()">Rematch 🔄</span>
         </div>
         <div class="hint">Same link, same two of you — you'll both draw a fresh fleet.</div>
+        ${this.showFull() ? `<div class="row" style="margin-top:10px">
+          <span class="btn" onclick="App.startFull()">🎬 Watch the full battle (${this.fullRun().length} moves)</span>
+        </div>` : ""}
       </div>` + this.nudgeHtml(iWon
         ? `Rub it in with ${nameOf(st, opp) || "them"}:`
         : `Demand satisfaction from ${nameOf(st, opp) || "them"}:`);
@@ -1846,7 +1975,7 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
         <div class="tab ${this.tab==="target"?"active":""}" onclick="App.setTab('target')">🎯 Their waters</div>
         <div class="tab ${this.tab==="fleet"?"active":""}" onclick="App.setTab('fleet')">🚢 Your fleet</div>
       </div>
-      ${this.reelBtnHtml()}
+      ${this.fullReplay ? this.fullBarHtml() : this.reelBtnHtml()}
       ${this.boardHtml(this.tab === "target" ? "target" : "fleet")}
       ${controls}
       ${overCard}
