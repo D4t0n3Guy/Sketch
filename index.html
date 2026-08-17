@@ -1970,9 +1970,6 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
           <span class="btn primary big" style="max-width:260px" onclick="App.rematch()">Rematch 🔄</span>
         </div>
         <div class="hint">Same link, same two of you — you'll both draw a fresh fleet.</div>
-        ${this.showFull() ? `<div class="row" style="margin-top:10px">
-          <span class="btn" onclick="App.startFull()">🎬 Watch the full battle (${this.fullRun().length} moves)</span>
-        </div>` : ""}
       </div>` + this.nudgeHtml(iWon
         ? `Rub it in with ${nameOf(st, opp) || "them"}:`
         : `Demand satisfaction from ${nameOf(st, opp) || "them"}:`);
@@ -1991,7 +1988,11 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
         <div class="tab ${this.tab==="target"?"active":""}" onclick="App.setTab('target')">🎯 Their waters</div>
         <div class="tab ${this.tab==="fleet"?"active":""}" onclick="App.setTab('fleet')">🚢 Your fleet</div>
       </div>
-      ${this.fullReplay ? this.fullBarHtml() : this.reelBtnHtml()}
+      ${this.fullReplay ? this.fullBarHtml()
+        : this.showFull() ? `<div class="row" style="margin-top:8px">
+            <span class="btn primary" onclick="App.startFull()">🎬 Watch the full battle (${this.fullRun().length} moves)</span>
+          </div>`
+        : this.reelBtnHtml()}
       ${this.boardHtml(this.tab === "target" ? "target" : "fleet")}
       ${controls}
       ${overCard}
