@@ -516,6 +516,7 @@ const App = {
   fullAuto: false,        // playing vs paused
   fullTimer: null,
   fullMask: null,         // { p1:Set, p2:Set } squares not yet fired on
+  pendingFull: false,     // opened from the home screen to watch it back
   overSeen: null,
   vs: "",
   classic: false,
@@ -585,6 +586,9 @@ const App = {
     if ((Number(res.st.mv) || 0) > hw) lsSet("sks:seen:" + id, String(res.st.mv));
     saveMyGame(id, {
       label: `${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
+      over: res.st.ph === "o",
+      moves: (res.st.hy || []).length,
+      won: res.st.ph === "o" ? (res.st.w === res.you) : null,
     });
     const oppName = nameOf(res.st, other(res.you));
     if (oppName) {
@@ -604,6 +608,10 @@ const App = {
     }
     if (this.fullReplay && res.st.ph !== "o") this.stopFull();
     this.render();
+    if (this.pendingFull) {
+      this.pendingFull = false;
+      if (res.st.ph === "o" && (res.st.hy || []).length) { this.startFull(); return; }
+    }
     if (replay) this.playReel(rl);
     this.pollStart();
   },
@@ -1464,6 +1472,12 @@ const App = {
     }
   },
 
+  async replaySaved(id) {
+    this.pendingFull = true;
+    history.replaceState(null, "", "#g=" + id);
+    await this.open(id);
+  },
+
   openSaved(id) {
     if (!myGames()[id]) return;
     history.replaceState(null, "", "#g=" + id);
@@ -1754,9 +1768,11 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
       const games = Object.entries(myGames()).sort((a, b) => b[1].ts - a[1].ts);
       const list = games.length ? `<div class="card"><h2>Your battles</h2>` +
         games.map(([id, g]) => `<div class="gameRow">
-          <span class="body">${g.label || id}</span>
+          <span class="body">${g.label || id}${g.over
+            ? ` <span style="opacity:0.6">· ${g.won === true ? "won 🏆" : g.won === false ? "lost 💀" : "finished"}</span>` : ""}</span>
           <span>
-            <span class="btn small primary" onclick="App.openSaved('${id}')">Open ▶︎</span>
+            ${g.over && g.moves ? `<span class="btn small" onclick="App.replaySaved('${id}')">🎬 Replay</span>` : ""}
+            <span class="btn small ${g.over ? "" : "primary"}" onclick="App.openSaved('${id}')">${g.over ? "Open" : "Open ▶︎"}</span>
             <span class="btn small" onclick="App.dropSaved('${id}')">✕</span>
           </span></div>`).join("") + `</div>` : "";
       const mates = Object.entries(crew()).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
