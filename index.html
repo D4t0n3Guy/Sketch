@@ -1546,6 +1546,27 @@ const App = {
     const st = this.st, me = this.me;
     if (!st || !isTTT(st) || st.ph !== "b" || st.t !== me || this.saving) return;
     if (!st.rul && marksOf(st, "p1").length === 0 && marksOf(st, "p2").length === 0) return;
+    /* Wins-first extra: spend your turn tracing over your fading mark, making it
+       your newest again. Not twice in a row — endless mutual tracing would
+       smuggle draws back in — and never under fade-first. */
+    const mine = marksOf(st, me);
+    const traced = me === "p1" ? st.rf1 : st.rf2;
+    if (st.rul !== "f" && mine.length >= 3 && mine[0] === i && !traced) {
+      setMarks(st, me, [...mine.slice(1), i]);
+      if (me === "p1") st.rf1 = 1; else st.rf2 = 1;
+      st.t = other(me);
+      st.la = { by: me, add: null, rm: null, wl: null, rf: i };
+      st.hy = [...(st.hy || []), st.la].slice(-400);
+      st.lg = [...(st.lg || []).slice(-4),
+        `✏️ ${nameOf(st, me)} traced over their fading mark — it stays`];
+      if (this.tAnimTimer) clearTimeout(this.tAnimTimer);
+      this.tAnim = { ...st.la };
+      this.tAnimTimer = setTimeout(() => { this.tAnim = null; this.tAnimTimer = null; this.render(); }, 1400);
+      this.netErr = "";
+      this.render();
+      this.commit();
+      return;
+    }
     if (marksOf(st, "p1").includes(i) || marksOf(st, "p2").includes(i)) return;
     const marks = [...marksOf(st, me)];
     marks.push(i);
@@ -1562,6 +1583,7 @@ const App = {
       if (!wl && marks.length > 3) rm = marks.shift();
     }
     setMarks(st, me, marks);
+    if (me === "p1") st.rf1 = 0; else st.rf2 = 0;   // a placed mark re-arms tracing
     let line = `\u270F\uFE0F ${nameOf(st, me)} took the ${TTT_SPOT[i]}` +
       (rm != null ? " \u2014 an old mark rubbed out" : "");
     if (wl) {
@@ -1609,6 +1631,7 @@ const App = {
     st.rd = (st.rd || 1) + 1;
     st.w = ""; st.la = null;
     st.rul = "";                                 // the starter is asked again
+    st.rf1 = 0; st.rf2 = 0;
     st.lg = [...(st.lg || []).slice(-4), `\uD83D\uDD04 Round ${st.rd} \u2014 ${nameOf(st, st.t)} starts!`];
     if (this.tAnimTimer) clearTimeout(this.tAnimTimer);
     this.tAnim = null; this.tAnimTimer = null;
@@ -1653,7 +1676,7 @@ const App = {
       const own1 = marksOf(st, "p1").includes(i), own2 = marksOf(st, "p2").includes(i);
       let mark = "";
       if (own1 || own2) {
-        const fresh = !!(a && a.add === i && ((a.by === "p1") === own1));
+        const fresh = !!(a && (a.add === i || a.rf === i) && ((a.by === "p1") === own1));
         mark = this.tttMarkSvg(own1 ? "x" : "o", { seed: i + 1, fresh, old: i === oldMark && !fresh });
       } else if (a && a.rm === i) {
         // Just erased — rub it out, with a few eraser crumbs flying off.
@@ -1664,7 +1687,11 @@ const App = {
             --cx:${cx}px;--cy:${cy}px;animation-delay:${k * 60}ms"></span>`;
         }
       }
-      const tap = live && st.t === me && !own1 && !own2 && !this.saving
+      const myMarks = marksOf(st, me);
+      const canTrace = live && st.t === me && !this.saving && st.rul !== "f"
+        && myMarks.length >= 3 && myMarks[0] === i
+        && !(me === "p1" ? st.rf1 : st.rf2);
+      const tap = live && st.t === me && !this.saving && ((!own1 && !own2) || canTrace)
         ? ` data-tap="ttt" data-i="${i}"` : "";
       cells += `<div class="tCell"${tap} style="left:${c * px}px;top:${r * px}px;width:${px}px;height:${px}px">${mark}</div>`;
     }
@@ -1712,8 +1739,8 @@ const App = {
         <div class="hint" style="margin-top:8px">${st.rul === "f"
           ? "Faded marks vanish before the win is checked — they can never win. Now take the first move."
           : st.rul === "w"
-          ? "Three in a row through your faded mark still counts. Now take the first move."
-          : "⚡ a faded mark can still win · 💨 it can't"}</div>
+          ? "A faded mark can still win — and you can spend a turn tracing over yours to keep it (not twice in a row). Now take the first move."
+          : "⚡ a faded mark can still win, and can be traced over · 💨 it can't"}</div>
       </div>`;
       return pill(st.rul
         ? `${st.rul === "f" ? "💨 Fade first" : "⚡ Wins first"} — ${nameOf(st, st.t) || "they"} is about to start`
@@ -1763,8 +1790,12 @@ const App = {
     if (myTurn) {
       const mustPick = !st.rul
         && marksOf(st, "p1").length === 0 && marksOf(st, "p2").length === 0;
+      const canTraceHint = st.rul !== "f" && marksOf(st, me).length >= 3
+        && !(me === "p1" ? st.rf1 : st.rf2);
       below = `<div class="hint" style="margin-top:8px">${mustPick
         ? "Pick the rule up top, then tap a square"
+        : canTraceHint
+        ? "Tap a square — or tap your faded mark to trace over it and keep it"
         : marksOf(st, me).length >= 3
         ? "Tap a square — your faded mark will be rubbed out"
         : "Tap a square"}</div>`;
@@ -2082,7 +2113,9 @@ const App = {
       <b>no draws</b>: someone always gets three in a row. Loser starts the next round.<br><br>
       <b>The starter picks the rule</b> before their first mark each round:<br>
       <b>⚡ Wins first</b> — three in a row through your faded mark still counts;
-      it only fades when the move doesn't win.<br>
+      it only fades when the move doesn't win. You may also spend your whole turn
+      <b>tracing over your faded mark</b> (tap it) to make it your newest again —
+      just not twice in a row.<br>
       <b>💨 Fade first</b> — your faded mark vanishes before the win is
       checked, so it can't be part of the winning three.<br><br>
       No timers. The board updates by itself — the \uD83D\uDCAC button just texts them a
