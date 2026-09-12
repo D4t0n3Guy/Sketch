@@ -349,7 +349,7 @@ function freshTTT(n1) {
     v: 3, g: "t", mv: 1,
     n1: n1 || "", n2: "",
     ph: "p", t: "p1", w: "",
-    m1: [], m2: [], sc1: 0, sc2: 0, rd: 1,
+    m1: [], m2: [], sc1: 0, sc2: 0, rd: 1, rul: "w",
     la: null, lg: [], hy: [],
   };
 }
@@ -1546,12 +1546,18 @@ const App = {
     if (marksOf(st, "p1").includes(i) || marksOf(st, "p2").includes(i)) return;
     const marks = [...marksOf(st, me)];
     marks.push(i);
-    // The win is judged before anything fades: complete a line through your
-    // oldest, still-faded mark and it counts. Only a non-winning 4th mark
-    // rubs the oldest out.
-    const wl = tttWinLine(marks) || null;
-    let rm = null;
-    if (!wl && marks.length > 3) rm = marks.shift();
+    /* Two house rules, picked by whoever makes the round's first move:
+       "w" — wins first: complete a line through your faded mark and it counts;
+             it only fades when the move doesn't win.
+       "f" — fade first: the oldest mark vanishes before the win is checked. */
+    let wl = null, rm = null;
+    if (st.rul === "f") {
+      if (marks.length > 3) rm = marks.shift();
+      wl = tttWinLine(marks) || null;
+    } else {
+      wl = tttWinLine(marks) || null;
+      if (!wl && marks.length > 3) rm = marks.shift();
+    }
     setMarks(st, me, marks);
     let line = `\u270F\uFE0F ${nameOf(st, me)} took the ${TTT_SPOT[i]}` +
       (rm != null ? " \u2014 an old mark rubbed out" : "");
@@ -1574,6 +1580,22 @@ const App = {
     // Draw it now; the save happens behind the scenes.
     this.render();
     this.commit();
+  },
+
+  tttCanRule() {
+    const st = this.st;
+    return !!(st && isTTT(st) && st.ph === "b" && st.t === this.me
+      && marksOf(st, "p1").length === 0 && marksOf(st, "p2").length === 0);
+  },
+  async tttSetRule(r) {
+    const st = this.st;
+    if (!this.tttCanRule() || this.saving || st.rul === r) return;
+    st.rul = r;
+    st.lg = [...(st.lg || []).slice(-4), r === "f"
+      ? `📏 ${nameOf(st, this.me)} set the rule: the fade beats the win`
+      : `📏 ${nameOf(st, this.me)} set the rule: wins beat the fade`];
+    this.render();
+    await this.commit();
   },
 
   async tttRematch() {
@@ -1679,8 +1701,8 @@ const App = {
       el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
         <div class="card"><h2>Join ${st.n1}'s game! \u270F\uFE0F</h2>
           <div class="body">Endless tic-tac-toe: you each only ever have three marks —
-            place a fourth and your oldest is rubbed out — unless that move wins,
-            wins come first. Nobody can block forever, so there are no draws. You go first.</div>
+            place a fourth and your oldest is rubbed out. Nobody can block forever,
+            so there are no draws. You go first — and the starter picks the round's rule.</div>
           <div class="label">Your name</div>
           <input type="text" id="nm" value="${typed}" placeholder="Your name…">
           <div style="margin-top:14px"><span class="btn primary big" onclick="App.tttJoin()">Let's play \u270F\uFE0F</span></div>
@@ -1742,6 +1764,16 @@ const App = {
         <div style="text-align:right"><div class="pname">${nameOf(st, opp) || "Them"}</div>
           <div class="star" style="color:${oppCol}">${oppSym} · ${roundsOf(st, opp)}W</div></div>
       </div>
+      ${this.tttCanRule() ? `
+      <div class="row" style="margin-bottom:4px">
+        <span class="btn small ${st.rul !== "f" ? "primary" : ""}" onclick="App.tttSetRule('w')">⚡ Wins first</span>
+        <span class="btn small ${st.rul === "f" ? "primary" : ""}" onclick="App.tttSetRule('f')">💨 Fade first</span>
+      </div>
+      <div class="hint" style="margin-bottom:6px">You start, so you pick: ${st.rul === "f"
+        ? "your faded mark vanishes before the win is checked"
+        : "three in a row through your faded mark still counts"}</div>`
+      : `<div class="hint" style="margin-bottom:6px">Rule this round: ${st.rul === "f"
+        ? "the fade beats the win" : "wins beat the fade"}</div>`}
       ${this.tttBoardHtml()}
       ${below}
       <div class="card" style="margin-top:12px">
@@ -2019,9 +2051,13 @@ const App = {
     if (this.st && isTTT(this.st)) return `<div class="card"><h2>How to play</h2><div class="body">
       Ordinary tic-tac-toe, one twist: <b>you only ever have three marks on the board</b>.
       When you place a fourth, your oldest one is rubbed out — it shows faded, so you can
-      both see it coming. But the win comes first: complete three in a row through your
-      faded mark and it still counts. Nobody can sit on a block forever, which means there are
+      both see it coming. Nobody can sit on a block forever, which means there are
       <b>no draws</b>: someone always gets three in a row. Loser starts the next round.<br><br>
+      <b>The starter picks the rule</b> before their first mark each round:<br>
+      <b>⚡ Wins first</b> — three in a row through your faded mark still counts;
+      it only fades when the move doesn't win.<br>
+      <b>💨 Fade first</b> — your faded mark vanishes before the win is
+      checked, so it can't be part of the winning three.<br><br>
       No timers. The board updates by itself — the \uD83D\uDCAC button just texts them a
       "your move" nudge. One link per game: whoever opens it on their own phone gets
       their own side, and it stays theirs.
@@ -2147,9 +2183,9 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
           </div>
           ${this.gameType === "ttt" ? `
           <div class="powDesc" style="margin-left:0"><b>Endless tic-tac-toe</b><br>You each only ever
-            have three marks on the board. Placing a fourth rubs out your oldest — unless that move
-            makes three in a row, wins count first. Nobody can block forever, so a draw is
-            impossible. First three in a row takes the round.</div>` : `
+            have three marks on the board. Placing a fourth rubs out your oldest — nobody can block
+            forever, so a draw is impossible. First three in a row takes the round, and
+            whoever starts a round picks whether a faded mark can still win.</div>` : `
           <div class="label">Rules</div>
           <div class="row" style="justify-content:flex-start">
             <span class="btn small ${this.classic?"":"primary"}" onclick="App.setClassic(false)">🎨 Freeform</span>
