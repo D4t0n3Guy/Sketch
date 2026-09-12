@@ -202,6 +202,9 @@
   .tBoard { position: relative; transform: rotate(-0.4deg); touch-action: manipulation; }
   .tCell { position: absolute; cursor: pointer; border-radius: 14px; -webkit-tap-highlight-color: transparent; }
   .tCell:active { background: rgba(255,224,102,0.4); }
+  .tWinCell { background: rgba(255,224,102,0.5); border-radius: 14px; }
+  @keyframes winWashA { from { background: rgba(255,224,102,0); } to { background: rgba(255,224,102,0.5); } }
+  .tWinCell.washIn { animation: winWashA 0.5s ease 0.9s both; }
   .tGrid, .tWin { position: absolute; left: 0; top: 0; pointer-events: none; }
   .tWin { z-index: 5; }
   .tMark { position: absolute; left: 13%; top: 13%; width: 74%; height: 74%; pointer-events: none; }
@@ -235,6 +238,11 @@
    Who you are comes from a per-device id in localStorage, never the link.
    ================================================================ */
 "use strict";
+
+/* Bumped on every deploy. Game states carry the highest build that touched
+   them; a client that sees a newer number reloads itself — server holds all
+   game state, so a reload is loss-free and cures mismatched phones. */
+const BUILD = 4;
 
 /* aim: where you tap — "enemy", "own", or "none" (fires straight away).
    kind: "act" spends your turn, "sup" is a buy-and-keep-shooting support move. */
@@ -620,7 +628,17 @@ const App = {
     }
   },
 
+  /* The other phone is on a newer deploy than us — refresh to match it.
+     Throttled so a stale CDN can't trap us in a reload loop. */
+  maybeReload() {
+    const last = Number(lsGet("sks:rlAt") || 0);
+    if (Date.now() - last < 60000) return;
+    lsSet("sks:rlAt", String(Date.now()));
+    try { location.reload(); } catch (e) {}
+  },
+
   applyServer(id, res, firstLoad) {
+    if ((Number(res.st && res.st.bv) || 0) > BUILD) this.maybeReload();
     const prevMv = this.st ? this.st.mv : parseInt(lsGet("sks:seen:" + id) || "0", 10);
     this.id = id;
     this.me = res.you;
@@ -932,6 +950,7 @@ const App = {
 
   /* ---------- save ---------- */
   async commit() {
+    this.st.bv = Math.max(Number(this.st.bv) || 0, BUILD);
     const prevMv = this.st.mv;
     this.st.mv = prevMv + 1;
     this.epoch++;
@@ -1693,7 +1712,9 @@ const App = {
         && !(me === "p1" ? st.rf1 : st.rf2);
       const tap = live && st.t === me && !this.saving && ((!own1 && !own2) || canTrace)
         ? ` data-tap="ttt" data-i="${i}"` : "";
-      cells += `<div class="tCell"${tap} style="left:${c * px}px;top:${r * px}px;width:${px}px;height:${px}px">${mark}</div>`;
+      const wonCls = (winLn || doneLn || []).includes(i)
+        ? ` tWinCell${winLn ? " washIn" : ""}` : "";
+      cells += `<div class="tCell${wonCls}"${tap} style="left:${c * px}px;top:${r * px}px;width:${px}px;height:${px}px">${mark}</div>`;
     }
 
     // The # grid, hand-drawn.
@@ -1715,9 +1736,12 @@ const App = {
       const len = Math.round(Math.hypot(x2 - x1, y2 - y1));
       const dA = winLn
         ? `class="drawme" style="stroke-dasharray:${len};stroke-dashoffset:${len};animation-delay:0.55s;animation-duration:0.5s"` : "";
-      strike = `<svg class="tWin" width="${B}" height="${B}" viewBox="0 0 ${B} ${B}" style="filter:url(#wobble)">
-        <path d="M${x1} ${y1} L${x2} ${y2}" stroke="rgba(224,185,31,0.7)" stroke-width="15"
-          stroke-linecap="round" fill="none" ${dA}/></svg>`;
+      // no wobble filter here: some browsers mishandle SVG-on-SVG filters, and
+      // the win must never be the thing that fails to draw
+      strike = `<svg class="tWin" width="${B}" height="${B}" viewBox="0 0 ${B} ${B}">
+        <path d="M${x1} ${y1 - 2} L${(x1 + x2) / 2} ${(y1 + y2) / 2 + 2} L${x2} ${y2 - 1}"
+          stroke="rgba(212,168,20,0.85)" stroke-width="13"
+          stroke-linecap="round" stroke-linejoin="round" fill="none" ${dA}/></svg>`;
     }
     const shake = winLn ? "animation: shakeA 420ms ease-in-out 1050ms both;" : "";
     return `<div class="tBoardWrap"><div class="tBoard" style="width:${B}px;height:${B}px;${shake}">${grid}${cells}${strike}</div></div>`;
