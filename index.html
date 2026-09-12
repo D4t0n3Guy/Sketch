@@ -197,6 +197,8 @@
   }
   /* --- tic-tac-toe --- */
   .tBoardWrap { display: flex; justify-content: center; margin-top: 8px; }
+  .rulePill { display: inline-block; border: 2px dashed #3b3e45; border-radius: 12px;
+    padding: 3px 12px; font-size: 16px; background: #fffdf6; transform: rotate(-0.5deg); }
   .tBoard { position: relative; transform: rotate(-0.4deg); touch-action: manipulation; }
   .tCell { position: absolute; cursor: pointer; border-radius: 14px; -webkit-tap-highlight-color: transparent; }
   .tCell:active { background: rgba(255,224,102,0.4); }
@@ -349,7 +351,7 @@ function freshTTT(n1) {
     v: 3, g: "t", mv: 1,
     n1: n1 || "", n2: "",
     ph: "p", t: "p1", w: "",
-    m1: [], m2: [], sc1: 0, sc2: 0, rd: 1, rul: "w",
+    m1: [], m2: [], sc1: 0, sc2: 0, rd: 1, rul: "",
     la: null, lg: [], hy: [],
   };
 }
@@ -1543,6 +1545,7 @@ const App = {
   tttTap(i) {
     const st = this.st, me = this.me;
     if (!st || !isTTT(st) || st.ph !== "b" || st.t !== me || this.saving) return;
+    if (!st.rul && marksOf(st, "p1").length === 0 && marksOf(st, "p2").length === 0) return;
     if (marksOf(st, "p1").includes(i) || marksOf(st, "p2").includes(i)) return;
     const marks = [...marksOf(st, me)];
     marks.push(i);
@@ -1605,6 +1608,7 @@ const App = {
     st.t = st.w === "p1" ? "p2" : "p1";          // loser starts the next round
     st.rd = (st.rd || 1) + 1;
     st.w = ""; st.la = null;
+    st.rul = "";                                 // the starter is asked again
     st.lg = [...(st.lg || []).slice(-4), `\uD83D\uDD04 Round ${st.rd} \u2014 ${nameOf(st, st.t)} starts!`];
     if (this.tAnimTimer) clearTimeout(this.tAnimTimer);
     this.tAnim = null; this.tAnimTimer = null;
@@ -1692,6 +1696,34 @@ const App = {
     return `<div class="tBoardWrap"><div class="tBoard" style="width:${B}px;height:${B}px;${shake}">${grid}${cells}${strike}</div></div>`;
   },
 
+  /* The rule stays on screen the whole round; while the board is still
+     empty the round's starter is asked to pick it before anything else. */
+  tttRuleAreaHtml() {
+    const st = this.st, me = this.me;
+    const empty = marksOf(st, "p1").length === 0 && marksOf(st, "p2").length === 0;
+    const pill = txt => `<div style="text-align:center;margin-bottom:6px"><span class="rulePill">${txt}</span></div>`;
+    if (st.ph === "b" && empty) {
+      if (st.t === me) return `<div class="card" style="text-align:center">
+        <h2>Your round — pick the rule</h2>
+        <div class="row" style="margin-top:6px">
+          <span class="btn ${st.rul === "w" ? "primary" : ""}" onclick="App.tttSetRule('w')">⚡ Wins first</span>
+          <span class="btn ${st.rul === "f" ? "primary" : ""}" onclick="App.tttSetRule('f')">💨 Fade first</span>
+        </div>
+        <div class="hint" style="margin-top:8px">${st.rul === "f"
+          ? "Faded marks vanish before the win is checked — they can never win. Now take the first move."
+          : st.rul === "w"
+          ? "Three in a row through your faded mark still counts. Now take the first move."
+          : "⚡ a faded mark can still win · 💨 it can't"}</div>
+      </div>`;
+      return pill(st.rul
+        ? `${st.rul === "f" ? "💨 Fade first" : "⚡ Wins first"} — ${nameOf(st, st.t) || "they"} is about to start`
+        : `✏️ ${nameOf(st, st.t) || "They"} is picking this round's rule…`);
+    }
+    return pill(st.rul === "f"
+      ? `💨 Fade first — faded marks can't win`
+      : `⚡ Wins first — faded marks can still win`);
+  },
+
   tttView(el) {
     const st = this.st, me = this.me, opp = other(me);
 
@@ -1729,7 +1761,11 @@ const App = {
 
     let below = "";
     if (myTurn) {
-      below = `<div class="hint" style="margin-top:8px">${marksOf(st, me).length >= 3
+      const mustPick = !st.rul
+        && marksOf(st, "p1").length === 0 && marksOf(st, "p2").length === 0;
+      below = `<div class="hint" style="margin-top:8px">${mustPick
+        ? "Pick the rule up top, then tap a square"
+        : marksOf(st, me).length >= 3
         ? "Tap a square — your faded mark will be rubbed out"
         : "Tap a square"}</div>`;
     } else if (st.ph === "b") {
@@ -1764,16 +1800,7 @@ const App = {
         <div style="text-align:right"><div class="pname">${nameOf(st, opp) || "Them"}</div>
           <div class="star" style="color:${oppCol}">${oppSym} · ${roundsOf(st, opp)}W</div></div>
       </div>
-      ${this.tttCanRule() ? `
-      <div class="row" style="margin-bottom:4px">
-        <span class="btn small ${st.rul !== "f" ? "primary" : ""}" onclick="App.tttSetRule('w')">⚡ Wins first</span>
-        <span class="btn small ${st.rul === "f" ? "primary" : ""}" onclick="App.tttSetRule('f')">💨 Fade first</span>
-      </div>
-      <div class="hint" style="margin-bottom:6px">You start, so you pick: ${st.rul === "f"
-        ? "your faded mark vanishes before the win is checked"
-        : "three in a row through your faded mark still counts"}</div>`
-      : `<div class="hint" style="margin-bottom:6px">Rule this round: ${st.rul === "f"
-        ? "the fade beats the win" : "wins beat the fade"}</div>`}
+      ${this.tttRuleAreaHtml()}
       ${this.tttBoardHtml()}
       ${below}
       <div class="card" style="margin-top:12px">
