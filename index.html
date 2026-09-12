@@ -195,6 +195,22 @@
     font-family: 'Caveat', cursive; font-size: 24px; font-weight: 700; color: #b08900;
     animation: floatUp 1.8s ease-out both;
   }
+  /* --- tic-tac-toe --- */
+  .tBoardWrap { display: flex; justify-content: center; margin-top: 8px; }
+  .tBoard { position: relative; transform: rotate(-0.4deg); touch-action: manipulation; }
+  .tCell { position: absolute; cursor: pointer; border-radius: 14px; -webkit-tap-highlight-color: transparent; }
+  .tCell:active { background: rgba(255,224,102,0.4); }
+  .tGrid, .tWin { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .tWin { z-index: 5; }
+  .tMark { position: absolute; left: 13%; top: 13%; width: 74%; height: 74%; pointer-events: none; }
+  @keyframes oldPulse { 0%,100% { opacity: 0.62; } 50% { opacity: 0.26; } }
+  .tOld { animation: oldPulse 1.5s ease-in-out infinite; }
+  @keyframes eraseA { 0% { opacity: 0.85; } 100% { opacity: 0; transform: scale(0.82) rotate(10deg); filter: blur(3px); } }
+  .tErase { animation: eraseA 0.85s ease-in both; }
+  @keyframes crumbA { 0% { opacity: 0.9; transform: translate(0,0) rotate(0deg); }
+    100% { opacity: 0; transform: translate(var(--cx), var(--cy)) rotate(140deg); } }
+  .crumb { position: absolute; width: 7px; height: 4px; border-radius: 2px;
+    background: #c98b83; z-index: 6; pointer-events: none; animation: crumbA 0.9s ease-out both; }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; }
   }
@@ -314,6 +330,29 @@ function chSet(str, i, ch) { return str.substring(0, i) + ch + str.substring(i +
 const CLASSIC = { size: 10, fleet: { 4: 1, 3: 2, 2: 3, 1: 4 } };
 const CLASSIC_CELLS = Object.entries(CLASSIC.fleet).reduce((t, [len, n]) => t + (+len) * n, 0);
 const isClassic = st => !!(st && st.cl);
+
+/* Tic-tac-toe, endless edition: three marks each, oldest-first, and placing a
+   fourth rubs the oldest out — so blocks can't hold forever and draws can't happen. */
+const isTTT = st => !!(st && st.g === "t");
+const TTT_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+const TTT_SPOT = ["top-left corner","top","top-right corner","left side","center",
+  "right side","bottom-left corner","bottom","bottom-right corner"];
+const marksOf = (st, p) => (p === "p1" ? st.m1 : st.m2) || [];
+function setMarks(st, p, v) { if (p === "p1") st.m1 = v; else st.m2 = v; }
+const roundsOf = (st, p) => (p === "p1" ? st.sc1 : st.sc2) || 0;
+function tttWinLine(marks) {
+  const have = new Set(marks);
+  return TTT_LINES.find(L => L.every(i => have.has(i))) || null;
+}
+function freshTTT(n1) {
+  return {
+    v: 3, g: "t", mv: 1,
+    n1: n1 || "", n2: "",
+    ph: "p", t: "p1", w: "",
+    m1: [], m2: [], sc1: 0, sc2: 0, rd: 1,
+    la: null, lg: [], hy: [],
+  };
+}
 
 /* What's drawn so far, tolerant of half-finished shapes, for the live checklist. */
 function fleetTally(cellSet, s) {
@@ -520,6 +559,9 @@ const App = {
   overSeen: null,
   vs: "",
   classic: false,
+  gameType: "bs",   // what the setup screen will create: "bs" or "ttt"
+  tAnim: null,      // tic-tac-toe: the move being animated right now
+  tAnimTimer: null,
   view: "home",
   tab: "target",
   mode: "fire",
@@ -585,11 +627,13 @@ const App = {
     const hw = parseInt(lsGet("sks:seen:" + id) || "0", 10);
     if ((Number(res.st.mv) || 0) > hw) lsSet("sks:seen:" + id, String(res.st.mv));
     saveMyGame(id, {
-      label: `${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
+      label: `${isTTT(res.st) ? "\u270F\uFE0F " : ""}${res.st.n1 || "?"} vs ${res.st.n2 || "…"}`,
       over: res.st.ph === "o",
-      moves: (res.st.hy || []).length,
+      // the 🎬 whole-battle replay is battleship-only — keep its button off TTT rows
+      moves: isTTT(res.st) ? 0 : (res.st.hy || []).length,
       won: res.st.ph === "o" ? (res.st.w === res.you) : null,
     });
+    if (res.st.ph !== "o") this.overSeen = null;   // a fresh round's result should count too
     const oppName = nameOf(res.st, other(res.you));
     if (oppName) {
       const ended = res.st.ph === "o" && !this.overSeen;
@@ -602,6 +646,15 @@ const App = {
     const replay = !!(rl && rl.by !== this.me && !rl.open
       && rl.acts && rl.acts.length && res.st.mv > prevMv && prevMv > 0);
     if (replay) this.tab = "fleet";
+    // Tic-tac-toe: their move just arrived — draw it in, rub the old one out.
+    if (isTTT(res.st) && res.st.la && res.st.la.by !== res.you
+        && res.st.mv > prevMv && prevMv > 0 && res.st.ph !== "p") {
+      if (this.tAnimTimer) clearTimeout(this.tAnimTimer);
+      this.tAnim = { ...res.st.la };
+      this.tAnimTimer = setTimeout(() => {
+        this.tAnim = null; this.tAnimTimer = null; this.render();
+      }, res.st.la.wl ? 2600 : 1400);
+    }
     this.view = this.viewFor(res.st);
     if (firstLoad && this.view === "place" && shipsOf(res.st, this.me).length === 0) {
       this.paint = new Set(); this.fleet = null; this.pick = -1; this.noAutoFleet = false; this.placeMsg = "";
@@ -616,7 +669,7 @@ const App = {
     this.pollStart();
   },
 
-  viewFor(st) { return st.ph === "p" ? "place" : "battle"; },
+  viewFor(st) { return isTTT(st) ? "ttt" : (st.ph === "p" ? "place" : "battle"); },
 
   /* ---------- turn replay ---------- */
   cellDelay(anim, k, isBlast) {
@@ -718,7 +771,7 @@ const App = {
      hit yet stay blank as it plays forward. */
   showFull() {
     const st = this.st;
-    return !!(st && st.ph === "o" && st.hy && st.hy.length);
+    return !!(st && !isTTT(st) && st.ph === "o" && st.hy && st.hy.length);
   },
 
   fullRun() { return (this.st && this.st.hy) || []; },
@@ -852,9 +905,12 @@ const App = {
   async pollTick() {
     const st = this.st;
     if (!st || !this.id || this.saving) return;
-    const waiting =
-      (st.ph === "p" && shipsOf(st, this.me).length > 0 && shipsOf(st, other(this.me)).length === 0) ||
-      (st.ph === "b" && st.t !== this.me);
+    const waiting = isTTT(st)
+      ? (st.ph === "p" ? this.me === "p1"          // creator waits for player two to join
+         : st.ph === "o" ? true                    // keep watching for their "next round"
+         : st.t !== this.me)
+      : (st.ph === "p" && shipsOf(st, this.me).length > 0 && shipsOf(st, other(this.me)).length === 0) ||
+        (st.ph === "b" && st.t !== this.me);
     // A failed save leaves us unsure what the server holds, so refresh regardless.
     if (!waiting && !this.resync) return;
     const id = this.id, epoch = this.epoch;
@@ -919,13 +975,41 @@ const App = {
 
   /* ---------- flows ---------- */
   startSetup(vs) { this.netErr = ""; this.vs = vs || ""; this.view = "setup"; this.render(); },
-  setClassic(on) { this.classic = !!on; this.render(); },
+  /* Toggling an option re-renders the whole card — hold on to a typed name first. */
+  keepTypedName() {
+    const nm = document.getElementById("nm");
+    if (nm && nm.value.trim()) lsSet("sks:name", nm.value.trim());
+  },
+  setClassic(on) { this.keepTypedName(); this.classic = !!on; this.render(); },
+  setGameType(g) { this.keepTypedName(); this.gameType = g; this.render(); },
   forgetMate(key) { crewForget(key); this.render(); },
 
   async createGame() {
     const name = document.getElementById("nm").value.trim();
     if (!name) { alert("Give us a name, Admiral!"); return; }
     lsSet("sks:name", name);
+
+    if (this.gameType === "ttt") {
+      const st = freshTTT(name);
+      this.view = "loading"; this.render();
+      try {
+        const res = await api({ action: "create", st });
+        this.id = res.id;
+        this.me = "p1"; this.st = st;
+        history.replaceState(null, "", "#g=" + res.id);
+        saveMyGame(res.id, { label: `\u270F\uFE0F ${name} vs ${this.vs || "…"}` });
+        if (this.vs) crewNote(this.vs, res.id, null);
+        lsSet("sks:seen:" + res.id, "1");
+        this.view = "ttt";
+        this.render();
+        this.pollStart();
+      } catch (e) {
+        this.view = "setup"; this.netErr = "Couldn't create the game 🌊 Check connection.";
+        this.render();
+      }
+      return;
+    }
+
     const s = this.classic ? CLASSIC.size
       : parseInt(document.querySelector(".sizeBtn.primary").dataset.s, 10);
     const b = this.classic ? CLASSIC_CELLS
@@ -1432,8 +1516,240 @@ const App = {
     this.commit();
   },
 
+  /* ================================================================
+     Tic-tac-toe — endless edition.
+     Rides the same server untouched: ph "p" = waiting for player two to
+     open the link and give a name, ph "b" = playing (the server enforces
+     whose turn it is), ph "o" = round over. Marks are stored oldest-first,
+     never more than three per side.
+     ================================================================ */
+  tttPx() { return Math.max(84, Math.min(118, Math.floor((Math.min(window.innerWidth, 520) - 72) / 3))); },
+
+  async tttJoin() {
+    const st = this.st;
+    const nm = document.getElementById("nm").value.trim();
+    if (!nm) { this.netErr = "Give us a name first!"; this.render(); return; }
+    lsSet("sks:name", nm);
+    setName(st, this.me, nm);
+    st.ph = "b";
+    st.t = this.me;              // the joiner draws first, same as battleship
+    st.lg = [...(st.lg || []).slice(-4), `\u270F\uFE0F ${nm} picked up a pen \u2014 game on!`];
+    saveMyGame(this.id, { label: `\u270F\uFE0F ${st.n1 || "?"} vs ${st.n2 || "?"}` });
+    this.netErr = "";
+    this.render();
+    await this.commit();
+  },
+
+  tttTap(i) {
+    const st = this.st, me = this.me;
+    if (!st || !isTTT(st) || st.ph !== "b" || st.t !== me || this.saving) return;
+    if (marksOf(st, "p1").includes(i) || marksOf(st, "p2").includes(i)) return;
+    const marks = [...marksOf(st, me)];
+    let rm = null;
+    if (marks.length >= 3) rm = marks.shift();   // the oldest fades away
+    marks.push(i);
+    setMarks(st, me, marks);
+    const wl = tttWinLine(marks) || null;
+    let line = `\u270F\uFE0F ${nameOf(st, me)} took the ${TTT_SPOT[i]}` +
+      (rm != null ? " \u2014 an old mark rubbed out" : "");
+    if (wl) {
+      st.ph = "o"; st.w = me;
+      if (me === "p1") st.sc1 = (st.sc1 || 0) + 1; else st.sc2 = (st.sc2 || 0) + 1;
+      line = `\uD83C\uDFC6 ${nameOf(st, me)} takes round ${st.rd || 1}!`;
+    } else {
+      st.t = other(me);
+    }
+    st.la = { by: me, add: i, rm, wl };
+    st.hy = [...(st.hy || []), st.la].slice(-400);
+    st.lg = [...(st.lg || []).slice(-4), line];
+    if (this.tAnimTimer) clearTimeout(this.tAnimTimer);
+    this.tAnim = { ...st.la };
+    this.tAnimTimer = setTimeout(() => {
+      this.tAnim = null; this.tAnimTimer = null; this.render();
+    }, wl ? 2600 : 1400);
+    this.netErr = "";
+    // Draw it now; the save happens behind the scenes.
+    this.render();
+    this.commit();
+  },
+
+  async tttRematch() {
+    const st = this.st;
+    st.m1 = []; st.m2 = [];
+    st.ph = "b";
+    st.t = st.w === "p1" ? "p2" : "p1";          // loser starts the next round
+    st.rd = (st.rd || 1) + 1;
+    st.w = ""; st.la = null;
+    st.lg = [...(st.lg || []).slice(-4), `\uD83D\uDD04 Round ${st.rd} \u2014 ${nameOf(st, st.t)} starts!`];
+    if (this.tAnimTimer) clearTimeout(this.tAnimTimer);
+    this.tAnim = null; this.tAnimTimer = null;
+    this.overSeen = null;
+    this.render();
+    await this.commit();
+  },
+
+  /* An X is two red pencil strokes, an O one blue pen circle — both pushed
+     through the wobble filter and tilted a touch so no two cells match. */
+  tttMarkSvg(sym, o) {
+    o = o || {};
+    const cls = "tMark" + (o.old ? " tOld" : "") + (o.erase ? " tErase" : "");
+    const tilt = `transform:rotate(${((o.seed || 0) * 41) % 9 - 4}deg);filter:url(#wobble);`;
+    if (sym === "x") {
+      const d1 = o.fresh ? `class="drawme" style="stroke-dasharray:96;stroke-dashoffset:96"` : "";
+      const d2 = o.fresh ? `class="drawme d2" style="stroke-dasharray:96;stroke-dashoffset:96"` : "";
+      return `<svg class="${cls}" style="${tilt}" viewBox="0 0 100 100">
+        <path d="M22 18 Q48 52 80 84" stroke="#c23b32" stroke-width="9" stroke-linecap="round" fill="none" ${d1}/>
+        <path d="M80 20 Q54 48 20 82" stroke="#c23b32" stroke-width="9" stroke-linecap="round" fill="none" ${d2}/></svg>`;
+    }
+    const d1 = o.fresh ? `class="drawme" style="stroke-dasharray:100;stroke-dashoffset:100;animation-duration:0.55s"` : "";
+    return `<svg class="${cls}" style="${tilt}" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="33" pathLength="100" stroke="#3e6fb0" stroke-width="8.5"
+        fill="none" stroke-linecap="round" transform="rotate(-80 50 50)" ${d1}/></svg>`;
+  },
+
+  tttBoardHtml() {
+    const st = this.st, me = this.me;
+    const px = this.tttPx(), B = px * 3;
+    const a = this.tAnim;
+    const live = st.ph === "b";
+    // The mark that will vanish on the mover's next go — shown faded to both.
+    const moverMarks = marksOf(st, st.t);
+    const oldMark = live && moverMarks.length >= 3 ? moverMarks[0] : null;
+    const winLn = st.ph === "o" && a && a.wl ? a.wl : null;                       // animated strike
+    const doneLn = st.ph === "o" && !winLn && st.w ? tttWinLine(marksOf(st, st.w)) : null;
+
+    let cells = "";
+    for (let i = 0; i < 9; i++) {
+      const r = Math.floor(i / 3), c = i % 3;
+      const own1 = marksOf(st, "p1").includes(i), own2 = marksOf(st, "p2").includes(i);
+      let mark = "";
+      if (own1 || own2) {
+        const fresh = !!(a && a.add === i && ((a.by === "p1") === own1));
+        mark = this.tttMarkSvg(own1 ? "x" : "o", { seed: i + 1, fresh, old: i === oldMark && !fresh });
+      } else if (a && a.rm === i) {
+        // Just erased — rub it out, with a few eraser crumbs flying off.
+        mark = this.tttMarkSvg(a.by === "p1" ? "x" : "o", { seed: i + 1, erase: true });
+        for (let k = 0; k < 5; k++) {
+          const cx = Math.round(Math.sin(i * 3 + k * 7) * 26), cy = 12 + k * 7;
+          mark += `<span class="crumb" style="left:${24 + k * 12}%;top:${38 + (k % 3) * 14}%;
+            --cx:${cx}px;--cy:${cy}px;animation-delay:${k * 60}ms"></span>`;
+        }
+      }
+      const tap = live && st.t === me && !own1 && !own2 && !this.saving
+        ? ` data-tap="ttt" data-i="${i}"` : "";
+      cells += `<div class="tCell"${tap} style="left:${c * px}px;top:${r * px}px;width:${px}px;height:${px}px">${mark}</div>`;
+    }
+
+    // The # grid, hand-drawn.
+    const g = (x1, y1, x2, y2) =>
+      `<path d="M${x1} ${y1} L${x2} ${y2}" stroke="#3b3e45" stroke-width="4" stroke-linecap="round" fill="none"/>`;
+    const grid = `<svg class="tGrid" width="${B}" height="${B}" viewBox="0 0 ${B} ${B}" style="filter:url(#wobble)">
+      ${g(px, 8, px, B - 8)}${g(px * 2, 6, px * 2, B - 6)}
+      ${g(8, px, B - 8, px)}${g(6, px * 2, B - 6, px * 2)}</svg>`;
+
+    // The winning strike — one fat highlighter swipe across the three.
+    let strike = "";
+    const ln = winLn || doneLn;
+    if (ln) {
+      const ctr = j => [(j % 3) * px + px / 2, Math.floor(j / 3) * px + px / 2];
+      let [x1, y1] = ctr(ln[0]), [x2, y2] = ctr(ln[2]);
+      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+      const ex = (dx / L) * px * 0.34, ey = (dy / L) * px * 0.34;
+      x1 -= ex; y1 -= ey; x2 += ex; y2 += ey;
+      const len = Math.round(Math.hypot(x2 - x1, y2 - y1));
+      const dA = winLn
+        ? `class="drawme" style="stroke-dasharray:${len};stroke-dashoffset:${len};animation-delay:0.55s;animation-duration:0.5s"` : "";
+      strike = `<svg class="tWin" width="${B}" height="${B}" viewBox="0 0 ${B} ${B}" style="filter:url(#wobble)">
+        <path d="M${x1} ${y1} L${x2} ${y2}" stroke="rgba(224,185,31,0.7)" stroke-width="15"
+          stroke-linecap="round" fill="none" ${dA}/></svg>`;
+    }
+    const shake = winLn ? "animation: shakeA 420ms ease-in-out 1050ms both;" : "";
+    return `<div class="tBoardWrap"><div class="tBoard" style="width:${B}px;height:${B}px;${shake}">${grid}${cells}${strike}</div></div>`;
+  },
+
+  tttView(el) {
+    const st = this.st, me = this.me, opp = other(me);
+
+    // Player two just opened the link — get a name, then straight in.
+    if (st.ph === "p" && me === "p2" && !nameOf(st, me)) {
+      const typed = (lsGet("sks:name") || "").replace(/"/g, "&quot;");
+      el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+        <div class="card"><h2>Join ${st.n1}'s game! \u270F\uFE0F</h2>
+          <div class="body">Endless tic-tac-toe: you each only ever have three marks —
+            place a fourth and your oldest is rubbed out. Nobody can block forever,
+            so there are no draws. You go first.</div>
+          <div class="label">Your name</div>
+          <input type="text" id="nm" value="${typed}" placeholder="Your name…">
+          <div style="margin-top:14px"><span class="btn primary big" onclick="App.tttJoin()">Let's play \u270F\uFE0F</span></div>
+        </div>`;
+      return;
+    }
+
+    if (st.ph === "p") {
+      el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+        <div class="card" style="text-align:center"><h2>Game ready! \u270F\uFE0F</h2>
+          <div class="body">Waiting for ${this.vs || "your opponent"} to open the link — this page updates by itself.</div>
+        </div>` + this.nudgeHtml("Their invite is inside:");
+      return;
+    }
+
+    const myTurn = st.ph === "b" && st.t === me;
+    const mySym = me === "p1" ? "\u2715" : "\u25EF";
+    const oppSym = me === "p1" ? "\u25EF" : "\u2715";
+    const myCol = me === "p1" ? "#c23b32" : "#3e6fb0";
+    const oppCol = me === "p1" ? "#3e6fb0" : "#c23b32";
+    const overMsg = st.ph === "o"
+      ? (st.w === me ? `<span style="color:#5b8a5e">\uD83C\uDFC6 Round yours!</span>` : `<span style="color:#c23b32">They got it…</span>`)
+      : myTurn ? `<span style="color:#c23b32">Your move!</span>` : `<span style="opacity:0.6">Their move…</span>`;
+
+    let below = "";
+    if (myTurn) {
+      below = `<div class="hint" style="margin-top:8px">${marksOf(st, me).length >= 3
+        ? "Tap a square — your faded mark will be rubbed out"
+        : "Tap a square"}</div>`;
+    } else if (st.ph === "b") {
+      below = `<div style="margin-top:12px"></div>` +
+        this.nudgeHtml(`Waiting for ${nameOf(st, opp) || "them"} — the board updates by itself. Impatient?`);
+    } else {
+      const iWon = st.w === me;
+      below = `<div class="card overCard ${iWon ? "win" : "lose"}" style="text-align:center;margin-top:12px">
+        <div class="overBanner">${iWon ? "\uD83C\uDFC6 ROUND WON" : "\uD83D\uDC80 ROUND LOST"}</div>
+        <h2 style="margin:2px 0 0">${iWon
+          ? "Three in a row!"
+          : `${nameOf(st, opp) || "They"} got three in a row.`}</h2>
+        <div class="body" style="margin-top:6px">Rounds — you ${roundsOf(st, me)} · them ${roundsOf(st, opp)}</div>
+        <div class="row" style="margin-top:12px">
+          <span class="btn primary big" style="max-width:260px" onclick="App.tttRematch()">Next round \uD83D\uDD04</span>
+        </div>
+        <div class="hint">Loser starts. Same link, same two of you.</div>
+      </div>` + this.nudgeHtml(iWon
+        ? `Rub it in with ${nameOf(st, opp) || "them"}:`
+        : `Demand satisfaction from ${nameOf(st, opp) || "them"}:`);
+    }
+
+    const logs = (st.lg || []).slice(-4).reverse()
+      .map((l, k) => `<div class="body ${k === 0 ? "log0" : "logn"}">${l}</div>`).join("");
+
+    el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
+      <div class="status">
+        <div><div class="pname">${nameOf(st, me) || "You"}</div>
+          <div class="star" style="color:${myCol}">${mySym} · ${roundsOf(st, me)}W</div></div>
+        <div style="text-align:center;flex:1"><div class="turnTxt">${overMsg}</div>
+          <div class="hint" style="margin-top:0">Round ${st.rd || 1}</div></div>
+        <div style="text-align:right"><div class="pname">${nameOf(st, opp) || "Them"}</div>
+          <div class="star" style="color:${oppCol}">${oppSym} · ${roundsOf(st, opp)}W</div></div>
+      </div>
+      ${this.tttBoardHtml()}
+      ${below}
+      <div class="card" style="margin-top:12px">
+        <div class="label" style="margin-top:0">Score sheet</div>${logs || `<div class="body logn">First move goes in the book…</div>`}
+      </div>`;
+  },
+
   homeBtn() {
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.tAnimTimer) clearTimeout(this.tAnimTimer);
+    this.tAnim = null; this.tAnimTimer = null;
     this.st = null; this.id = null; this.me = null; this.lockedOut = null;
     history.replaceState(null, "", location.pathname);
     this.view = "home"; this.render();
@@ -1497,6 +1813,13 @@ const App = {
   buildMessage() {
     const st = this.st, opp = other(this.me);
     const link = this.gameLink();
+    if (isTTT(st)) {
+      if (st.ph === "p")
+        return `\u270F\uFE0F ${nameOf(st, this.me)} challenges you to endless tic-tac-toe — old marks fade away, so there are NO draws! Open this on your own phone to make the first move:\n${link}`;
+      if (st.ph === "o")
+        return `\uD83C\uDFC6 Tic-tac-toe: ${nameOf(st, st.w)} takes round ${st.rd || 1}! Score: ${st.n1} ${st.sc1 || 0}\u2013${st.sc2 || 0} ${st.n2}. Next round is waiting:\n${link}`;
+      return `\u270F\uFE0F Your move, ${nameOf(st, opp) || "friend"}!\n${link}`;
+    }
     if (st.ph === "p")
       return `⚓ ${nameOf(st, this.me)} challenges you to SketchShip! Open this on your own phone to draw your fleet & take the first shot:\n${link}`;
     if (st.ph === "o")
@@ -1690,6 +2013,15 @@ const App = {
 
   helpHtml() {
     if (!this.help) return "";
+    if (this.st && isTTT(this.st)) return `<div class="card"><h2>How to play</h2><div class="body">
+      Ordinary tic-tac-toe, one twist: <b>you only ever have three marks on the board</b>.
+      When you place a fourth, your oldest one is rubbed out — it shows faded, so you can
+      both see it coming. Nobody can sit on a block forever, which means there are
+      <b>no draws</b>: someone always gets three in a row. Loser starts the next round.<br><br>
+      No timers. The board updates by itself — the \uD83D\uDCAC button just texts them a
+      "your move" nudge. One link per game: whoever opens it on their own phone gets
+      their own side, and it stays theirs.
+    </div></div>`;
     return `<div class="card"><h2>How to play</h2><div class="body">
       ${this.st && isClassic(this.st)
         ? "Classic rules: a 10\u00D710 ocean and the traditional fleet \u2014 one 4-square ship, two 3-square, three 2-square and four single squares. No powers, no \u2605."
@@ -1789,7 +2121,7 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
         ${crewCard}
         ${list}
         <div class="card"><h2>Ahoy! ⚓</h2>
-          <div class="body">A slow-burn battleship for two people who text each other. No timers, no passwords — got an invite? Just tap the link you were texted, on your own phone.</div>
+          <div class="body">Slow-burn battleship — and endless tic-tac-toe — for two people who text each other. No timers, no passwords — got an invite? Just tap the link you were texted, on your own phone.</div>
           <div style="margin-top:14px">
             <span class="btn primary big" onclick="App.startSetup()">Start a new game</span>
           </div>
@@ -1801,9 +2133,18 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
       const savedName = (lsGet("sks:name") || "").replace(/"/g, "&quot;");
       el.innerHTML = this.headerHtml() + this.helpHtml() + this.netErrHtml() + `
         <div class="card"><h2>Start a new voyage</h2>
-          ${this.vs ? `<div class="hint" style="margin-top:0">Challenging <b>${this.vs}</b> — send them the link once you've drawn your fleet.</div>` : ""}
+          ${this.vs ? `<div class="hint" style="margin-top:0">Challenging <b>${this.vs}</b> — you'll send them the link ${this.gameType === "ttt" ? "on the next screen" : "once you've drawn your fleet"}.</div>` : ""}
           <div class="label">Your name</div>
           <input type="text" id="nm" value="${savedName}" placeholder="Admiral…">
+          <div class="label">Game</div>
+          <div class="row" style="justify-content:flex-start">
+            <span class="btn small ${this.gameType !== "ttt" ? "primary" : ""}" onclick="App.setGameType('bs')">⚓ Battleship</span>
+            <span class="btn small ${this.gameType === "ttt" ? "primary" : ""}" onclick="App.setGameType('ttt')">✏️ Tic-tac-toe</span>
+          </div>
+          ${this.gameType === "ttt" ? `
+          <div class="powDesc" style="margin-left:0"><b>Endless tic-tac-toe</b><br>You each only ever
+            have three marks on the board. Placing a fourth rubs out your oldest — nobody can block
+            forever, so a draw is impossible. First three in a row takes the round.</div>` : `
           <div class="label">Rules</div>
           <div class="row" style="justify-content:flex-start">
             <span class="btn small ${this.classic?"":"primary"}" onclick="App.setClassic(false)">🎨 Freeform</span>
@@ -1824,11 +2165,13 @@ ${this.st && isClassic(this.st) ? "" : `<b>Attacks</b> (these use your turn):<br
             <span class="btn small" onclick="App.bumpBudget(-2)">−</span>
             <h2 id="budget" style="min-width:40px;text-align:center;margin:0">14</h2>
             <span class="btn small" onclick="App.bumpBudget(2)">+</span>
-          </div>`}
-          <div style="margin-top:16px"><span class="btn primary big" onclick="App.createGame()">Set sail ⛵</span></div>
+          </div>`}`}
+          <div style="margin-top:16px"><span class="btn primary big" onclick="App.createGame()">${this.gameType === "ttt" ? "Start the game ✏️" : "Set sail ⛵"}</span></div>
         </div>`;
       return;
     }
+
+    if (this.view === "ttt") { this.tttView(el); return; }
 
     if (this.view === "place") {
       const myShips = shipsOf(st, this.me);
@@ -2016,6 +2359,7 @@ if (appEl) appEl.addEventListener("pointerdown", ev => {
   if (kind === "paint") App.tapPaint(i);
   else if (kind === "own") App.tapOwn(i);
   else if (kind === "target") App.tapTarget(i);
+  else if (kind === "ttt") App.tttTap(i);
 }, { passive: true });
 window.addEventListener("hashchange", () => App.boot());
 document.addEventListener("visibilitychange", () => { if (!document.hidden) App.pollNow(); });
